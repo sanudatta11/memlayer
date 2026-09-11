@@ -110,20 +110,20 @@ h6,
 }
 
 /* Hide homepage body until the banner parts */
-html[data-ml-hero='holding'] [data-has-hero] .sl-markdown-content,
-html[data-ml-hero='parting'] [data-has-hero] .sl-markdown-content {
+html[data-ml-intro='holding'] [data-has-hero] .sl-markdown-content {
 	opacity: 0;
 	transform: translateY(0.75rem);
 	pointer-events: none;
 }
 
-html[data-ml-hero='revealed'] [data-has-hero] .sl-markdown-content,
-html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
+html[data-ml-intro='parting'] [data-has-hero] .sl-markdown-content,
+html[data-ml-intro='revealed'] [data-has-hero] .sl-markdown-content,
+html:not([data-ml-intro]) [data-has-hero] .sl-markdown-content {
 	opacity: 1;
 	transform: none;
 	transition:
-		opacity 0.55s ease,
-		transform 0.55s ease;
+		opacity 0.55s ease 0.2s,
+		transform 0.55s ease 0.2s;
 }
 
 [data-has-hero] .main-frame::before {
@@ -187,7 +187,8 @@ html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
 	z-index: 40;
 	display: flex;
 	pointer-events: none;
-	background: hsl(168, 14%, 5%);
+	/* Transparent — only the shards cover the page so home can show through the split. */
+	background: transparent;
 }
 
 .ml-hero__shard {
@@ -195,10 +196,11 @@ html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
 	width: 50%;
 	height: 100%;
 	overflow: hidden;
+	background: hsl(168, 14%, 5%);
 	will-change: transform, opacity;
 	transition:
-		transform 0.9s cubic-bezier(0.55, 0.05, 0.75, 0.2),
-		opacity 0.75s ease;
+		transform 0.85s cubic-bezier(0.55, 0.05, 0.8, 0.15),
+		opacity 0.7s ease;
 }
 
 .ml-hero__shard img {
@@ -227,8 +229,7 @@ html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
 }
 
 .ml-hero[data-state='revealed'] .ml-hero__curtain {
-	opacity: 0;
-	transition: opacity 0.2s ease 0.55s;
+	visibility: hidden;
 }
 
 .ml-hero__copy {
@@ -241,15 +242,15 @@ html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
 	box-sizing: border-box;
 	opacity: 0;
 	transform: translateY(1rem);
+	transition:
+		opacity 0.55s ease 0.12s,
+		transform 0.55s ease 0.12s;
 }
 
 .ml-hero[data-state='parting'] .ml-hero__copy,
 .ml-hero[data-state='revealed'] .ml-hero__copy {
 	opacity: 1;
 	transform: none;
-	transition:
-		opacity 0.6s ease 0.15s,
-		transform 0.6s ease 0.15s;
 }
 
 .ml-hero__wordmark {
@@ -277,7 +278,7 @@ html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
 	}
 
 	.ml-hero__copy,
-	html[data-ml-hero] [data-has-hero] .sl-markdown-content {
+	html[data-ml-intro] [data-has-hero] .sl-markdown-content {
 		opacity: 1 !important;
 		transform: none !important;
 		transition: none !important;
