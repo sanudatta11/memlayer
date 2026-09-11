@@ -154,23 +154,54 @@ h6,
 	mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 65%, transparent 100%);
 }
 
-/* Hero */
+/* Hero — full-bleed strata banner carries the wordmark */
 .ml-hero {
 	display: grid;
 	gap: clamp(1.5rem, 3vw, 2.25rem);
-	padding-block: clamp(2.5rem, 8vmin, 5.5rem) clamp(2rem, 4vmin, 3.5rem);
-	max-width: 48rem;
+	padding-block: 0 clamp(2rem, 4vmin, 3.5rem);
+	max-width: none;
+	width: 100%;
+}
+
+.ml-hero__banner {
+	position: relative;
+	width: 100vw;
+	max-width: 100vw;
+	margin-inline: calc(50% - 50vw);
+	aspect-ratio: 16 / 9;
+	overflow: clip;
+	background: hsl(168, 14%, 6%);
+}
+
+.ml-hero__banner picture,
+.ml-hero__banner img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	object-position: center;
 }
 
 .ml-hero__wordmark {
-	font-family: var(--ml-display);
-	font-size: clamp(3rem, 11vw, 5.25rem);
-	font-weight: 700;
-	line-height: 0.95;
-	letter-spacing: -0.04em;
-	color: var(--sl-color-white);
-	margin: 0;
-	max-width: none;
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
+}
+
+.ml-hero__copy {
+	display: grid;
+	gap: clamp(1.25rem, 2.5vw, 1.75rem);
+	max-width: 48rem;
+	padding-inline: var(--sl-content-pad-x, 1rem);
+	margin-inline: auto;
+	width: 100%;
+	box-sizing: border-box;
 }
 
 .ml-hero__tagline {
