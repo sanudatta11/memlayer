@@ -33,9 +33,7 @@ Strategy: **Restrained** neutrals + one copper accent (Read/Operate docs chrome)
 
 ## Motion
 
-- Strata band drift on splash (`ml-strata-drift`, reduced-motion safe)
-- Staggered rise + blur settle on hero blocks (`ml-rise`)
-- Copper pulse on local status (`ml-pulse`)
+- No looping pulse or entrance animations; calm static strata atmosphere only.
 
 ## Surfaces
 
