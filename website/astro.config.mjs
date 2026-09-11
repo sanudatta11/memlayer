@@ -13,6 +13,10 @@ export default defineConfig({
 			description:
 				'Persistent memory for AI coding agents — local, per-project, no cloud.',
 			favicon: '/favicon.svg',
+			customCss: ['./src/styles/custom.css'],
+			components: {
+				Hero: './src/components/Hero.astro',
+			},
 			social: [
 				{
 					icon: 'github',
