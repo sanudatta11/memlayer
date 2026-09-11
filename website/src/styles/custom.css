@@ -184,7 +184,7 @@ html:not([data-ml-intro]) [data-has-hero] .sl-markdown-content {
 .ml-hero__curtain {
 	position: fixed;
 	inset: 0;
-	z-index: 40;
+	z-index: 1000;
 	display: flex;
 	pointer-events: none;
 	/* Transparent — only the shards cover the page so home can show through the split. */
@@ -226,10 +226,6 @@ html:not([data-ml-intro]) [data-has-hero] .sl-markdown-content {
 .ml-hero[data-state='revealed'] .ml-hero__shard--right {
 	transform: translate3d(112%, 0, 0) rotate(2.5deg);
 	opacity: 0;
-}
-
-.ml-hero[data-state='revealed'] .ml-hero__curtain {
-	visibility: hidden;
 }
 
 .ml-hero__copy {

@@ -71,9 +71,8 @@ memlayer --version</code></pre>
 <script>
 	function finishCurtain(curtain: Element | null) {
 		if (!(curtain instanceof HTMLElement)) return;
-		const drop = () => curtain.remove();
-		curtain.addEventListener('transitionend', drop, { once: true });
-		window.setTimeout(drop, 1100);
+		// Wait for shard fly-away (~0.85s) before removing the curtain node.
+		window.setTimeout(() => curtain.remove(), 900);
 	}
 
 	function runHeroIntro() {
@@ -82,6 +81,9 @@ memlayer --version</code></pre>
 
 		const curtain = hero.querySelector('[data-ml-curtain]');
 		const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		// Allow ?intro=force to demo the split even when OS asks for reduced motion.
+		const params = new URLSearchParams(window.location.search);
+		const forceIntro = params.get('intro') === 'force';
 
 		const reveal = () => {
 			hero.dataset.state = 'revealed';
@@ -89,16 +91,34 @@ memlayer --version</code></pre>
 			finishCurtain(curtain);
 		};
 
-		if (reduce) {
+		if (reduce && !forceIntro) {
 			reveal();
 			return;
 		}
 
-		window.setTimeout(() => {
+		const startParting = () => {
 			hero.dataset.state = 'parting';
 			document.documentElement.dataset.mlIntro = 'parting';
-			window.setTimeout(reveal, 700);
-		}, 500);
+			window.setTimeout(reveal, 900);
+		};
+
+		const imgs = curtain instanceof HTMLElement ? [...curtain.querySelectorAll('img')] : [];
+		const ready = Promise.all(
+			imgs.map(
+				(img) =>
+					img.complete
+						? Promise.resolve()
+						: new Promise((res) => {
+								img.addEventListener('load', () => res(undefined), { once: true });
+								img.addEventListener('error', () => res(undefined), { once: true });
+							})
+			)
+		);
+
+		ready.then(() => {
+			// Hold long enough to read the wordmark, then split.
+			window.setTimeout(startParting, 800);
+		});
 	}
 
 	if (document.readyState === 'loading') {
