@@ -99,7 +99,7 @@ h6,
 	outline-offset: 3px;
 }
 
-/* Quiet splash atmosphere — no motion */
+/* Quiet splash atmosphere */
 [data-has-hero] .page {
 	isolation: isolate;
 }
@@ -107,6 +107,23 @@ h6,
 [data-has-hero] .main-frame {
 	position: relative;
 	overflow: clip;
+}
+
+/* Hide homepage body until the banner parts */
+html[data-ml-hero='holding'] [data-has-hero] .sl-markdown-content,
+html[data-ml-hero='parting'] [data-has-hero] .sl-markdown-content {
+	opacity: 0;
+	transform: translateY(0.75rem);
+	pointer-events: none;
+}
+
+html[data-ml-hero='revealed'] [data-has-hero] .sl-markdown-content,
+html:not([data-ml-hero]) [data-has-hero] .sl-markdown-content {
+	opacity: 1;
+	transform: none;
+	transition:
+		opacity 0.55s ease,
+		transform 0.55s ease;
 }
 
 [data-has-hero] .main-frame::before {
@@ -154,44 +171,64 @@ h6,
 	mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 65%, transparent 100%);
 }
 
-/* Hero — full-bleed strata banner carries the wordmark */
+/* Hero — brief full-bleed banner, then vertical split / fly-away */
 .ml-hero {
 	display: grid;
 	gap: clamp(1.5rem, 3vw, 2.25rem);
-	padding-block: 0 clamp(2rem, 4vmin, 3.5rem);
+	padding-block: clamp(2.5rem, 8vmin, 5.5rem) clamp(2rem, 4vmin, 3.5rem);
 	max-width: none;
 	width: 100%;
-}
-
-.ml-hero__banner {
 	position: relative;
-	width: 100vw;
-	max-width: 100vw;
-	margin-inline: calc(50% - 50vw);
-	aspect-ratio: 16 / 9;
-	overflow: clip;
-	background: hsl(168, 14%, 6%);
 }
 
-.ml-hero__banner picture,
-.ml-hero__banner img {
-	display: block;
-	width: 100%;
+.ml-hero__curtain {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	display: flex;
+	pointer-events: none;
+	background: hsl(168, 14%, 5%);
+}
+
+.ml-hero__shard {
+	position: relative;
+	width: 50%;
 	height: 100%;
+	overflow: hidden;
+	will-change: transform, opacity;
+	transition:
+		transform 0.9s cubic-bezier(0.55, 0.05, 0.75, 0.2),
+		opacity 0.75s ease;
+}
+
+.ml-hero__shard img {
+	display: block;
+	width: 200%;
+	height: 100%;
+	max-width: none;
 	object-fit: cover;
 	object-position: center;
 }
 
-.ml-hero__wordmark {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	margin: -1px;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
-	border: 0;
+.ml-hero__shard--right img {
+	margin-left: -100%;
+}
+
+.ml-hero[data-state='parting'] .ml-hero__shard--left,
+.ml-hero[data-state='revealed'] .ml-hero__shard--left {
+	transform: translate3d(-112%, 0, 0) rotate(-2.5deg);
+	opacity: 0;
+}
+
+.ml-hero[data-state='parting'] .ml-hero__shard--right,
+.ml-hero[data-state='revealed'] .ml-hero__shard--right {
+	transform: translate3d(112%, 0, 0) rotate(2.5deg);
+	opacity: 0;
+}
+
+.ml-hero[data-state='revealed'] .ml-hero__curtain {
+	opacity: 0;
+	transition: opacity 0.2s ease 0.55s;
 }
 
 .ml-hero__copy {
@@ -202,6 +239,28 @@ h6,
 	margin-inline: auto;
 	width: 100%;
 	box-sizing: border-box;
+	opacity: 0;
+	transform: translateY(1rem);
+}
+
+.ml-hero[data-state='parting'] .ml-hero__copy,
+.ml-hero[data-state='revealed'] .ml-hero__copy {
+	opacity: 1;
+	transform: none;
+	transition:
+		opacity 0.6s ease 0.15s,
+		transform 0.6s ease 0.15s;
+}
+
+.ml-hero__wordmark {
+	font-family: var(--ml-display);
+	font-size: clamp(3rem, 11vw, 5.25rem);
+	font-weight: 700;
+	line-height: 0.95;
+	letter-spacing: -0.04em;
+	color: var(--sl-color-white);
+	margin: 0;
+	max-width: none;
 }
 
 .ml-hero__tagline {
@@ -210,6 +269,20 @@ h6,
 	color: var(--sl-color-gray-2);
 	max-width: 38ch;
 	margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.ml-hero__curtain {
+		display: none;
+	}
+
+	.ml-hero__copy,
+	html[data-ml-hero] [data-has-hero] .sl-markdown-content {
+		opacity: 1 !important;
+		transform: none !important;
+		transition: none !important;
+		pointer-events: auto !important;
+	}
 }
 
 .ml-hero__actions {

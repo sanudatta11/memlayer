@@ -6,10 +6,14 @@ const { data } = Astro.locals.starlightRoute.entry;
 const { title = data.title, tagline, actions = [] } = data.hero || {};
 ---
 
-<section class="ml-hero" aria-labelledby={PAGE_TITLE_ID}>
-	<div class="ml-hero__banner">
-		<picture>
-			<source srcset="/banner.webp" type="image/webp" />
+{/* Pin holding state before paint so copy doesn't flash. */}
+<script is:inline>
+	document.documentElement.dataset.mlHero = 'holding';
+</script>
+
+<section class="ml-hero" aria-labelledby={PAGE_TITLE_ID} data-ml-hero data-state="holding">
+	<div class="ml-hero__curtain" aria-hidden="true" data-ml-curtain>
+		<div class="ml-hero__shard ml-hero__shard--left">
 			<img
 				src="/banner.jpg"
 				alt=""
@@ -18,10 +22,21 @@ const { title = data.title, tagline, actions = [] } = data.hero || {};
 				decoding="async"
 				fetchpriority="high"
 			/>
-		</picture>
-		<h1 id={PAGE_TITLE_ID} class="ml-hero__wordmark" data-page-title>{title}</h1>
+		</div>
+		<div class="ml-hero__shard ml-hero__shard--right">
+			<img
+				src="/banner.jpg"
+				alt=""
+				width="1920"
+				height="1081"
+				decoding="async"
+				fetchpriority="high"
+			/>
+		</div>
 	</div>
-	<div class="ml-hero__copy">
+
+	<div class="ml-hero__copy" data-ml-copy>
+		<h1 id={PAGE_TITLE_ID} class="ml-hero__wordmark" data-page-title>{title}</h1>
 		{tagline && <p class="ml-hero__tagline" set:html={tagline} />}
 		{
 			actions.length > 0 && (
@@ -50,3 +65,45 @@ memlayer --version</code></pre>
 		</div>
 	</div>
 </section>
+
+<script>
+	function finishCurtain(curtain: Element | null) {
+		if (!(curtain instanceof HTMLElement)) return;
+		const drop = () => curtain.remove();
+		curtain.addEventListener('transitionend', drop, { once: true });
+		window.setTimeout(drop, 1100);
+	}
+
+	function runHeroIntro() {
+		const hero = document.querySelector('[data-ml-hero]');
+		if (!(hero instanceof HTMLElement)) return;
+
+		const curtain = hero.querySelector('[data-ml-curtain]');
+		const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const reveal = () => {
+			hero.dataset.state = 'revealed';
+			document.documentElement.dataset.mlHero = 'revealed';
+			finishCurtain(curtain);
+		};
+
+		if (reduce) {
+			reveal();
+			return;
+		}
+
+		// Short hold on the banner, then split and fly.
+		window.setTimeout(() => {
+			hero.dataset.state = 'parting';
+			document.documentElement.dataset.mlHero = 'parting';
+			// Home content fades in while shards leave.
+			window.setTimeout(reveal, 450);
+		}, 650);
+	}
+
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', runHeroIntro, { once: true });
+	} else {
+		runHeroIntro();
+	}
+</script>
