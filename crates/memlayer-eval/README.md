@@ -1,7 +1,7 @@
 # memlayer-eval
 
-Benchmark harness for LoCoMo, LongMemEval, and BEAM. The daemon does not
-depend on this crate.
+Benchmark harness for LoCoMo, LongMemEval, BEAM, and a staleness fixture. The
+daemon does not depend on this crate.
 
 ## Local LoCoMo (preferred)
 
@@ -25,6 +25,9 @@ LIMIT=50 make eval-locomo
 
 # Re-print a saved scorecard against published bands
 make eval-locomo-compare SCORECARD=eval/locomo-full.json
+
+# Staleness: supersession vs add-only baseline (committed fixture, no network)
+make eval-staleness
 ```
 
 Scorecards land in `eval/` (gitignored). Published reference numbers live in
@@ -36,8 +39,8 @@ targets for CLI e2e and local analysis.
 
 ## Metrics
 
-memlayer `--save-scorecard` writes `accuracy_pct` (judge or lexical pass rate)
-and an F1 derived from that accuracy. That is **not** Maharana et al. token F1
-(human 87.9, GPT-4-turbo 51.6). Public locomo10 LLM-judge leaderboards are a
-closer family of metric, but only if judge model, k, and adversarial inclusion
-match. See `baselines/locomo.json`.
+memlayer `--save-scorecard` (scorecard 2.0) writes `accuracy_pct` (judge or
+lexical pass rate), `recall_at_k`, `mrr`, and optional `by_category`. It does
+**not** emit paper token F1. Staleness runs also report `superseded_served_pct`
+(lower is better). See `baselines/locomo.json` for published LoCoMo reference
+bands.

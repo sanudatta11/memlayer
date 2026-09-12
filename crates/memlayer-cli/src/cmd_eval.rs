@@ -27,9 +27,10 @@ async fn run_eval(args: EvalArgs, output_fmt: Option<OutputFormat>) -> Result<()
         "longmemeval" | "lme" => BenchmarkKind::Longmemeval,
         "beam1m" | "beam-1m" => BenchmarkKind::Beam1m,
         "beam10m" | "beam-10m" => BenchmarkKind::Beam10m,
+        "staleness" => BenchmarkKind::Staleness,
         other => {
             return Err(format!(
-                "unknown benchmark '{other}'; valid: locomo, longmemeval, beam1m, beam10m"
+                "unknown benchmark '{other}'; valid: locomo, longmemeval, beam1m, beam10m, staleness"
             ))
         }
     };
@@ -45,6 +46,25 @@ async fn run_eval(args: EvalArgs, output_fmt: Option<OutputFormat>) -> Result<()
             // Keep TempDir alive for the run by leaking it — the process is
             // short-lived; dropping would delete the DB under the runner.
             std::mem::forget(tmp);
+            if benchmark_kind == BenchmarkKind::Staleness {
+                let (memories, queries) = memlayer_eval::datasets::staleness::load(&eval_data_dir)
+                    .map_err(|e| format!("load staleness fixture: {e:#}"))?;
+                (
+                    memories,
+                    queries,
+                    RetrievalConfig {
+                        mode: RetrievalMode::Bm25,
+                        k: 10,
+                        evidence_window: 0,
+                        rerank: false,
+                        decay_lambda: 0.0,
+                    },
+                    eval_data_dir,
+                    true,
+                    false,
+                    1usize,
+                )
+            } else {
             (
                 smoke_memories(),
                 smoke_queries(),
@@ -60,6 +80,7 @@ async fn run_eval(args: EvalArgs, output_fmt: Option<OutputFormat>) -> Result<()
                 false,
                 1usize,
             )
+            }
         } else {
             if benchmark_kind == BenchmarkKind::Locomo {
                 let locomo = data_dir.join("locomo").join("locomo10.json");
@@ -110,6 +131,7 @@ async fn run_eval(args: EvalArgs, output_fmt: Option<OutputFormat>) -> Result<()
         trace_path: None,
         shards,
         lexical_judge,
+        no_supersede: args.no_supersede,
     };
 
     let report = memlayer_eval::runner::run(&cfg, memories, queries)
@@ -201,6 +223,11 @@ fn load_dataset(
         BenchmarkKind::Beam10m => Err(
             "beam-10m requires `eval prepare` first; use the eval binary or --smoke".into(),
         ),
+        BenchmarkKind::Staleness => {
+            let (m, q) = memlayer_eval::datasets::staleness::load(data_dir)
+                .map_err(|e| format!("load staleness: {e:#}"))?;
+            Ok((m, q.into_iter().take(cap).collect()))
+        }
     }
 }
 
@@ -215,6 +242,7 @@ mod tests {
             smoke: true,
             limit: Some(1),
             save_scorecard: None,
+            no_supersede: false,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let res = rt.block_on(run_eval(args, Some(OutputFormat::Json)));
@@ -239,6 +267,7 @@ mod tests {
             smoke: false,
             limit: Some(1),
             save_scorecard: None,
+            no_supersede: false,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         std::env::set_var("MEMLAYER_EVAL_DATA", "/tmp/memlayer-eval-missing-dataset");

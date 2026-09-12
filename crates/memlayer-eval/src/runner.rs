@@ -27,6 +27,7 @@ pub enum BenchmarkKind {
     Longmemeval,
     Beam1m,
     Beam10m,
+    Staleness,
 }
 
 impl BenchmarkKind {
@@ -36,6 +37,7 @@ impl BenchmarkKind {
             Self::Longmemeval => "lme-",
             Self::Beam1m      => "beam-1m",
             Self::Beam10m     => "beam-10m",
+            Self::Staleness   => "staleness-",
         }
     }
 }
@@ -70,6 +72,10 @@ pub struct RunConfig {
     /// appears in those hits (case-insensitive). Used by `memlayer eval
     /// --smoke` so CI needs no Claude CLI.
     pub lexical_judge: bool,
+    /// When true, ingest without supersession so both the stale and current
+    /// statements remain retrievable. Baseline arm for the staleness
+    /// benchmark; mirrors an add-only memory design.
+    pub no_supersede: bool,
 }
 
 /// Per-query result.
@@ -94,6 +100,9 @@ pub struct QueryResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gold_rank: Option<usize>,
     pub hits_count: usize,
+    /// True when the superseded (anti) value was served without the gold.
+    #[serde(default)]
+    pub stale_served: bool,
 }
 
 /// Per-category accuracy rollup.
@@ -201,7 +210,8 @@ pub async fn run(
     // --- Ingest ---
     if !cfg.skip_ingest {
         info!(count = memories.len(), "ingesting memories");
-        crate::ingest::ingest_memories(&cfg.data_dir, &memories, 500).await
+        crate::ingest::ingest_memories(&cfg.data_dir, &memories, 500, cfg.no_supersede)
+            .await
             .context("ingest")?;
     }
 
@@ -408,7 +418,7 @@ pub async fn run(
 
         // Build answer prompt and count tokens.
         let (system, user_msg, prompt_tokens) = build_answer_prompt(&hits, &q.question);
-        let gold_rank = gold_rank(&q.gold_answer, &hits);
+        let gold_hit_rank = gold_rank(&q.gold_answer, &hits);
 
         let (model_answer, judge_prompt, correct) = if cfg.lexical_judge {
             let joined = hits.join("\n");
@@ -442,6 +452,26 @@ pub async fn run(
                 }
             };
             (model_answer, judge_prompt, correct)
+        };
+
+        let stale_served = match &q.anti_answer {
+            Some(anti) if !anti.trim().is_empty() => {
+                let anti_hit_rank = gold_rank(anti, &hits);
+                let anti_l = anti.trim().to_ascii_lowercase();
+                let gold_l = q.gold_answer.trim().to_ascii_lowercase();
+                let anti_in_answer = model_answer.to_ascii_lowercase().contains(&anti_l);
+                let gold_in_answer = !gold_l.is_empty()
+                    && model_answer.to_ascii_lowercase().contains(&gold_l);
+                match (anti_hit_rank, gold_hit_rank) {
+                    // Superseded value retrieved and gold missing.
+                    (Some(_), None) => true,
+                    // Both retrieved: count when the superseded value ranks higher.
+                    (Some(a), Some(g)) => a < g,
+                    // No anti in hits: fall back to model answer (LLM path).
+                    (None, _) => anti_in_answer && !gold_in_answer,
+                }
+            }
+            _ => false,
         };
 
         let end_to_end_us = t_start.elapsed().as_micros() as u64;
@@ -512,8 +542,9 @@ pub async fn run(
             prompt_tokens,
             rerank_us,
             category: q.category.clone(),
-            gold_rank,
+            gold_rank: gold_hit_rank,
             hits_count: hits.len(),
+            stale_served,
         });
     }
 
@@ -575,6 +606,10 @@ fn infer_project(kind: BenchmarkKind, query_id: &str) -> String {
         }
         BenchmarkKind::Beam1m  => "beam-1m".to_string(),
         BenchmarkKind::Beam10m => "beam-10m".to_string(),
+        BenchmarkKind::Staleness => {
+            let tid = query_id.strip_suffix("-q").unwrap_or(query_id);
+            format!("staleness-{tid}")
+        }
     }
 }
 
@@ -587,6 +622,7 @@ pub fn facts_db_path_for(kind: BenchmarkKind, data_dir: &std::path::Path) -> Pat
         BenchmarkKind::Longmemeval => "longmemeval",
         BenchmarkKind::Beam1m => "beam-1m",
         BenchmarkKind::Beam10m => "beam-10m",
+        BenchmarkKind::Staleness => "staleness",
     };
     data_dir.join(name).join("facts.db")
 }
@@ -642,6 +678,23 @@ fn build_report(
         };
     }
 
+    let stale_count = results.iter().filter(|r| r.stale_served).count();
+    let has_anti = results.iter().any(|r| {
+        // Staleness runs always set anti via QueryResult path; detect via category
+        // or any stale_served / anti was possible — use superseded_served when
+        // any query had the staleness category.
+        r.category.as_deref() == Some("staleness")
+    });
+    let superseded_served_pct = if has_anti {
+        Some(if total == 0 {
+            0.0
+        } else {
+            stale_count as f64 / total as f64 * 100.0
+        })
+    } else {
+        None
+    };
+
     let retrieval_p50 = percentile_ms(&mut results.iter().map(|r| r.retrieval_us).collect::<Vec<_>>(), 50);
     let retrieval_p95 = percentile_ms(&mut results.iter().map(|r| r.retrieval_us).collect::<Vec<_>>(), 95);
     let e2e_p50 = percentile_ms(&mut results.iter().map(|r| r.end_to_end_us).collect::<Vec<_>>(), 50);
@@ -667,7 +720,7 @@ fn build_report(
         recall_at_k,
         mrr,
         by_category,
-        superseded_served_pct: None,
+        superseded_served_pct,
         retrieval_p50_ms: retrieval_p50,
         retrieval_p95_ms: retrieval_p95,
         end_to_end_p50_ms: e2e_p50,

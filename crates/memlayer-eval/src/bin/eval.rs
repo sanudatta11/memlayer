@@ -186,6 +186,7 @@ async fn main() -> Result<()> {
                 trace_path,
                 shards,
                 lexical_judge: false,
+                no_supersede: false,
             };
 
             let report = memlayer_eval::runner::run(&cfg, memories, queries).await?;
@@ -254,6 +255,10 @@ fn load_dataset(
         }
         BenchmarkKind::Beam10m => {
             bail!("Use `eval prepare --benchmark beam-10m` first, then `eval run --skip-ingest`.")
+        }
+        BenchmarkKind::Staleness => {
+            let (m, q) = memlayer_eval::datasets::staleness::load(data_dir)?;
+            Ok((m, q.into_iter().take(limit).collect()))
         }
     }
 }

@@ -118,7 +118,7 @@ pub struct TuiArgs {
 
 #[derive(Args, Debug)]
 pub struct EvalArgs {
-    /// Benchmark to evaluate: locomo, longmemeval, beam1m, beam10m. Default: locomo.
+    /// Benchmark to evaluate: locomo, longmemeval, beam1m, beam10m, staleness.
     #[arg(long, default_value = "locomo")]
     pub benchmark: String,
 
@@ -133,6 +133,10 @@ pub struct EvalArgs {
     /// Save JSON benchmark scorecard to specified file path.
     #[arg(long)]
     pub save_scorecard: Option<std::path::PathBuf>,
+
+    /// Ingest without supersession (staleness baseline arm).
+    #[arg(long)]
+    pub no_supersede: bool,
 }
 
 #[derive(Args, Debug)]

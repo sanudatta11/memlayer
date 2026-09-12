@@ -773,6 +773,7 @@ mod tests {
                 code_anchor: None,
                 dedupe_window_secs: 0, // disable dedupe so each row inserts
                 max_content_chars: 50_000,
+                    skip_supersede: false,
             },
         )
         .unwrap();
@@ -860,6 +861,7 @@ mod tests {
                     code_anchor: None,
                     dedupe_window_secs: 0,
                     max_content_chars: 50_000,
+                    skip_supersede: false,
                 },
             )
             .unwrap();
@@ -907,6 +909,7 @@ mod tests {
                     code_anchor: None,
                     dedupe_window_secs: 0,
                     max_content_chars: 50_000,
+                    skip_supersede: false,
                 },
             )
             .unwrap();
@@ -1092,6 +1095,7 @@ mod tests {
                     code_anchor: None,
                     dedupe_window_secs: 0,
                     max_content_chars: 50_000,
+                    skip_supersede: false,
                 },
             )
             .unwrap();
@@ -1174,6 +1178,7 @@ mod tests {
                 code_anchor: None,
                 dedupe_window_secs: 0,
                 max_content_chars: 50_000,
+                    skip_supersede: false,
             },
         )
         .unwrap();
@@ -1247,6 +1252,7 @@ mod tests {
                     code_anchor: None,
                     dedupe_window_secs: 0,
                     max_content_chars: 50_000,
+                    skip_supersede: false,
                 },
             )
             .unwrap();
@@ -1285,6 +1291,7 @@ mod tests {
                     title: format!("t-{content}"), content: content.into(),
                     tool_name: None, scope: "project".into(), created_by: None,
                     topic_key: None, code_anchor: None, dedupe_window_secs: 0, max_content_chars: 50_000,
+                    skip_supersede: false,
                 },
             ).unwrap();
             tx.commit().unwrap();

@@ -94,6 +94,7 @@ pub async fn handle(svc: &MemlayerService, req: DecideRequest) -> Result<DecideR
                 code_anchor: None,
                 dedupe_window_secs: 0,
                 max_content_chars: svc.state.max_content_chars,
+                    skip_supersede: false,
             },
             reply: tx,
         }))?;

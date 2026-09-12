@@ -159,6 +159,9 @@ pub struct SaveObservationInput {
     pub dedupe_window_secs: u64,
     /// Maximum content length (EC-2).
     pub max_content_chars: usize,
+    /// When true, insert without topic upsert or conflict supersession.
+    /// Used by the staleness benchmark baseline (add-only memory arm).
+    pub skip_supersede: bool,
 }
 
 /// Handle to a running write thread.
@@ -420,10 +423,11 @@ fn handle_save_observation(
 
     // 2. Topic-key upsert: if (topic_key, scope) match a non-deleted row,
     //    update it in place and return. (SC-5, EC-9)
-    if let Some(topic_key) = &input.topic_key {
-        if let Some(existing) = fetch_active_obs_by_topic(tx, topic_key, &input.scope)? {
-            tx.execute(
-                "UPDATE observations
+    if !input.skip_supersede {
+        if let Some(topic_key) = &input.topic_key {
+            if let Some(existing) = fetch_active_obs_by_topic(tx, topic_key, &input.scope)? {
+                tx.execute(
+                    "UPDATE observations
                     SET title = ?2,
                         content = ?3,
                         normalized_hash = ?4,
@@ -433,19 +437,20 @@ fn handle_save_observation(
                         review_after = COALESCE(?6, review_after),
                         code_anchor = COALESCE(?7, code_anchor)
                   WHERE id = ?1",
-                params![
-                    existing.id,
-                    &input.title,
-                    &input.content,
-                    &normalized_hash,
-                    &now,
-                    &review_after,
-                    &input.code_anchor,
-                ],
-            )
-            .map_err(|e| Error::internal(format!("topic upsert update: {e}")))?;
-            return fetch_observation_by_id(tx, existing.id)?
-                .ok_or_else(|| Error::internal("topic upsert: row vanished"));
+                    params![
+                        existing.id,
+                        &input.title,
+                        &input.content,
+                        &normalized_hash,
+                        &now,
+                        &review_after,
+                        &input.code_anchor,
+                    ],
+                )
+                .map_err(|e| Error::internal(format!("topic upsert update: {e}")))?;
+                return fetch_observation_by_id(tx, existing.id)?
+                    .ok_or_else(|| Error::internal("topic upsert: row vanished"));
+            }
         }
     }
 
@@ -516,7 +521,11 @@ fn handle_save_observation(
     //    If found, optionally consult the LLM conflict judge before deciding
     //    whether to supersede. On judge error/timeout fall back to the BM25
     //    heuristic (unconditional supersession).
-    let superseded_id = find_conflict_candidate(tx, id, &input)?;
+    let superseded_id = if input.skip_supersede {
+        None
+    } else {
+        find_conflict_candidate(tx, id, &input)?
+    };
     let do_supersede = if let Some(old_id) = superseded_id {
         should_supersede(old_id, id, tx, &input, conflict_classifier)
     } else {
@@ -1087,6 +1096,7 @@ mod tests {
             code_anchor: None,
             dedupe_window_secs: 60 * 60 * 24 * 30,
             max_content_chars: 50_000,
+                    skip_supersede: false,
         }
     }
 

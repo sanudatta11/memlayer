@@ -266,6 +266,7 @@ async fn save_resolution(
             code_anchor: None,
             dedupe_window_secs: 0,
             max_content_chars: 50_000,
+                    skip_supersede: false,
         },
         reply: tx,
     })?;

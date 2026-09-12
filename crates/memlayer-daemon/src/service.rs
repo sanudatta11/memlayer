@@ -531,6 +531,7 @@ impl Memlayer for MemlayerService {
             code_anchor: r.code_anchor,
             dedupe_window_secs: self.state.dedupe_window.as_secs(),
             max_content_chars: self.state.max_content_chars,
+                    skip_supersede: false,
         };
         let (tx, rx) = tokio::sync::oneshot::channel();
         map(project.write.send(WriteRequest::SaveObservation { input, reply: tx }))?;

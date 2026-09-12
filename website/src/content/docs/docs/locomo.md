@@ -14,6 +14,7 @@ make eval-locomo                # full locomo10 e2e
 make eval-locomo-e2e            # smoke then full
 LIMIT=50 make eval-locomo       # cheaper slice
 make eval-locomo-compare SCORECARD=eval/locomo-full.json
+make eval-staleness             # supersession vs --no-supersede baseline
 ```
 
 Scorecards are written to `eval/` (not committed). Equivalent CLI:
@@ -21,6 +22,8 @@ Scorecards are written to `eval/` (not committed). Equivalent CLI:
 ```bash
 memlayer eval --smoke --benchmark locomo --save-scorecard eval/locomo-smoke.json
 MEMLAYER_EVAL_DATA="$PWD/data" memlayer eval --benchmark locomo --save-scorecard eval/locomo-full.json
+memlayer eval --smoke --benchmark staleness --save-scorecard eval/staleness.json
+memlayer eval --smoke --benchmark staleness --no-supersede --save-scorecard eval/staleness-baseline.json
 ```
 
 ## What the numbers mean
@@ -29,8 +32,9 @@ MEMLAYER_EVAL_DATA="$PWD/data" memlayer eval --benchmark locomo --save-scorecard
 | --- | --- | --- |
 | Smoke | Lexical contain on one fixture query | Nothing published |
 | Full `accuracy_pct` | LLM-judge pass rate on locomo10 | Other locomo10 LLM-judge harnesses **if** judge model, k, and category filter match |
-| Scorecard `f1_score` | Derived from accuracy | Not paper token F1 |
+| `recall_at_k` / `mrr` | Gold present in retrieved set / reciprocal rank | Retrieval-only diagnostics |
 | Maharana et al. ACL 2024 | Token F1 on gold answers | Human 87.9, GPT-4-turbo 51.6 overall |
+| Staleness `superseded_served_pct` | Superseded value served without gold | Lower is better; compare default vs `--no-supersede` |
 
 Public locomo10 LLM-judge tables usually land around **67–80%** overall when
 adversarial items are dropped; some re-runs exceed **90%** with a stronger

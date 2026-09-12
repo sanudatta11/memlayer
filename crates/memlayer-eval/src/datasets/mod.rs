@@ -4,6 +4,7 @@
 pub mod beam;
 pub mod locomo;
 pub mod longmemeval;
+pub mod staleness;
 
 use serde::{Deserialize, Serialize};
 
