@@ -174,6 +174,15 @@ pub struct InstallArgs {
     /// kimi-code, zcode, agents, vscode, copilot-cli, copilot, gemini, codex, amazon-q.
     #[arg(long = "agent", short = 'a', value_name = "AGENT")]
     pub agents: Vec<String>,
+
+    /// Install post-commit / post-merge / post-checkout hooks that run
+    /// `memlayer verify --quiet`. Default: on when cwd is a git repo.
+    #[arg(long)]
+    pub git_hooks: bool,
+
+    /// Skip git-hook installation even when cwd is a git repo.
+    #[arg(long)]
+    pub no_git_hooks: bool,
 }
 
 #[derive(Args, Debug)]

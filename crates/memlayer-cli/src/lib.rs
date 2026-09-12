@@ -39,6 +39,7 @@ pub mod cmd_sync;
 pub mod cmd_team;
 pub mod cmd_version;
 pub mod cmd_verify;
+pub mod git_hooks;
 pub mod exit;
 pub mod formatter;
 pub mod mcp_install;

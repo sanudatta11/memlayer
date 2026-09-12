@@ -419,6 +419,31 @@ pub async fn dispatch(_fmt: Formatter, args: InstallArgs) -> ExitCode {
     println!("        or run `tail -f ~/.memlayer/queries.log` after the new session starts");
     println!("        — you should see an `obs.context` line within a second.");
 
+    // ── Git hooks (re-verify anchors after commit) ───────────────────────────
+    let want_hooks = if args.no_git_hooks {
+        false
+    } else if args.git_hooks {
+        true
+    } else {
+        memlayer_core::git::is_repo(&cwd)
+    };
+    if want_hooks {
+        match crate::git_hooks::install_git_hooks(&cwd) {
+            Ok(0) => {
+                if memlayer_core::git::is_repo(&cwd) {
+                    println!();
+                    println!("Git hooks already up-to-date (.git/hooks post-commit/merge/checkout).");
+                }
+            }
+            Ok(n) => {
+                println!();
+                println!("Installed {n} git hook(s) (post-commit / post-merge / post-checkout).");
+                println!("  They run `memlayer verify --quiet` in the background after each commit.");
+            }
+            Err(e) => eprintln!("  warn: could not install git hooks: {e}"),
+        }
+    }
+
     // ── Daemon restart ──────────────────────────────────────────────────────
     let socket = memlayer_core::paths::socket_path();
     if socket.exists() {
