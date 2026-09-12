@@ -38,7 +38,7 @@ messages. Call the new capability **Decide**. Call the conflict LLM the
 ## 2. Non-goals
 
 - Full disk encryption of `~/.memlayer/` databases.
-- Password-protected archives in v1 (optional passphrase is a follow-up).
+- Mandatory encryption (default export stays obfuscated-only).
 - Replacing git-chunk sync; `.mem` is a portable snapshot, not incremental
   git sync.
 - Reimplementing graphify / AST extraction.
@@ -81,27 +81,14 @@ JSON/Markdown export is readable in any editor. The requirement is a
 
 ### 4.2 Container (v1)
 
-Little-endian layout:
+Always **serialize → compress → wrap**. Never encrypt or obfuscate before
+zstd (ciphertext does not shrink).
 
-| Offset | Size | Field |
-|--------|------|--------|
-| 0 | 4 | Magic `MLYR` (`0x4D 0x4C 0x59 0x52`) |
-| 4 | 2 | Format version `u16` = `1` |
-| 6 | 1 | Flags (`u8`). Bit 0 reserved. Bit 1 = payload includes embeddings (default 0). |
-| 7 | 1 | Reserved `0` |
-| 8 | 8 | Uncompressed JSON byte length `u64` |
-| 16 | 32 | SHA-256 of uncompressed JSON |
-| 48 | 16 | Random nonce |
-| 64 | N | Obfuscated zstd frame |
+**Inner payload (size):** MessagePack (`rmp-serde`), compact, with
+`skip_serializing_if = "Vec::is_empty"` on list fields. No embeddings
+(re-queued on import). Soft-deleted observations stay in the snapshot.
 
-**Obfuscation (not secrecy):** key =
-`SHA256("memlayer.mem.v1\0" || nonce)` (32 bytes). XOR the zstd bytes
-with a repeating keystream from that key (block `i` uses
-`SHA256(key || i_le_u64)`). Opening the file in an editor shows binary
-garbage; `file(1)` will not report JSON. This is **obfuscation**. Anyone
-with this spec can decode. Do not claim encryption. No passphrase in v1.
-
-**Inner JSON** (never written to disk in plaintext):
+Logical shape (shown as JSON for reading; on disk this is msgpack):
 
 ```json
 {
@@ -110,7 +97,7 @@ with this spec can decode. Do not claim encryption. No passphrase in v1.
   "schema_version": 8,
   "exported_at": "2026-09-12T00:00:00Z",
   "project": "my-app",
-  "observations": [ /* storage Observation rows, including soft-deleted */ ],
+  "observations": [],
   "sessions": [],
   "prompts": [],
   "facts": [],
@@ -118,8 +105,59 @@ with this spec can decode. Do not claim encryption. No passphrase in v1.
 }
 ```
 
-Embeddings are omitted by default (large, model-specific). Import
-re-queues embed/extract workers.
+**Compression:** zstd **level 19** (archive path, not the save hot path).
+Pin `zstd::encode_all(bytes, 19)`.
+
+Little-endian header (88 bytes):
+
+| Offset | Size | Field |
+|--------|------|--------|
+| 0 | 4 | Magic `MLYR` (`0x4D 0x4C 0x59 0x52`) |
+| 4 | 2 | Format version `u16` = `1` |
+| 6 | 1 | Flags. Bit 0 = **encrypted** (seed phrase). Bit 1 = embeddings present (v1 = 0). |
+| 7 | 1 | Reserved `0` |
+| 8 | 8 | Uncompressed inner (msgpack) length `u64` |
+| 16 | 32 | SHA-256 of uncompressed inner |
+| 48 | 16 | Salt / XOR nonce (random) |
+| 64 | 24 | XChaCha20-Poly1305 nonce (random; ignored when bit 0 is clear) |
+| 88 | N | Body (see below) |
+
+**Default wrap (flag bit 0 = 0, not secret):** XOR-obfuscate the zstd
+frame with keystream `SHA256("memlayer.mem.v1\0" || salt)` as in the
+original plan. Body starts at offset 88. Anyone with this spec can
+decode. Docs must not call this encryption.
+
+**Optional seed-phrase wrap (flag bit 0 = 1):**
+
+1. Normalize the seed: Unicode NFC, trim ASCII whitespace / a single
+   trailing newline (seed-file friendly). Reject if the normalized
+   secret is shorter than 12 Unicode scalars.
+2. Derive a 32-byte key with **Argon2id** (RFC 9106), params pinned:
+   `m_cost = 65536` (64 MiB), `t_cost = 3`, `p_cost = 1`, version `0x13`,
+   salt = header bytes 48–63.
+3. Encrypt the **zstd frame** with **XChaCha20-Poly1305** (IETF AEAD,
+   24-byte nonce at offset 64). Body = ciphertext || 16-byte tag
+   (crate default layout).
+4. Zeroize the derived key after use. Never log the seed. Do not XOR
+   on top of AEAD (redundant; AEAD output is already non-legible).
+
+Wrong or missing seed → AEAD failure mapped to a clear error:
+“invalid seed phrase or archive is not encrypted with a seed”.
+Encrypted file + no seed on import → “this archive requires --seed-phrase
+or --seed-file”.
+
+Seed is an arbitrary memorable phrase, not a BIP39 wallet mnemonic (no
+wordlist check). Recommend six or more words in CLI help.
+
+### 4.3 Size budget
+
+Target: smaller than gzipped JSON of the same rows. Levers locked:
+
+1. MessagePack instead of JSON.
+2. Omit empty arrays and omit embedding blobs.
+3. zstd-19 after serialize.
+4. Unit test: a 50-row fixture’s `.mem` (default wrap) must be **strictly
+   smaller** than `zstd -3` of pretty-printed JSON of the same payload.
 
 ### 4.3 API
 
@@ -134,6 +172,8 @@ rpc ImportMem (ImportMemRequest) returns (ImportMemResponse);
 message ExportMemRequest {
   string project_name = 1;
   string file = 2;           // destination path; must end with .mem
+  // Optional seed phrase. Empty/absent = default obfuscation only.
+  optional string seed_phrase = 3;
 }
 message ExportMemResponse {
   string file = 1;
@@ -149,6 +189,7 @@ message ImportMemRequest {
   string file = 2;
   // "merge" (default): upsert by sync_id; "replace": wipe project then insert
   string mode = 3;
+  optional string seed_phrase = 4;  // required iff archive flag bit 0 is set
 }
 message ImportMemResponse {
   int64 observations_imported = 1;
@@ -163,9 +204,17 @@ message ImportMemResponse {
 CLI:
 
 ```bash
-memlayer mem export [--project NAME] --out backup.mem
-memlayer mem import backup.mem [--project NAME] [--mode merge|replace]
+memlayer mem export --out backup.mem
+memlayer mem export --out backup.mem --seed-phrase "twelve or more chars…"
+memlayer mem export --out backup.mem --seed-file ./phrase.txt
+memlayer mem import backup.mem
+memlayer mem import backup.mem --seed-file ./phrase.txt --mode merge
 ```
+
+`--seed-phrase` and `--seed-file` are mutually exclusive. Prefer
+`--seed-file` so the secret does not appear in `ps`. Daemon receives the
+seed over the local UDS gRPC channel; handlers must not write it to
+`tracing` fields.
 
 Reject paths that do not end in `.mem`. Magic mismatch → clear error
 “not a memlayer archive”.
@@ -177,9 +226,9 @@ and daemon handlers that snapshot via the write thread (`WriteRequest::Custom`).
 
 | Approach | Pros | Cons |
 |---|---|---|
-| **A. Custom MLYR + zstd + XOR keystream (chosen)** | Unique, compressed, not editor-legible, no new crypto deps | Not secret; spec-knowledgeable decoding |
-| B. Plain `.jsonl.zst` renamed `.mem` | Already exists | `zstd -d` yields readable JSON |
-| C. Age/age-encrypted archive with passphrase | Real secrecy | UX (lost keys), new dep, out of v1 scope |
+| **A. Default XOR + optional Argon2id/XChaCha20-Poly1305 (chosen)** | Small (msgpack+zstd-19); real secrecy when the user passes a seed; no extra wrap format | Lost seed = unrecoverable archive |
+| B. Plain `.jsonl.zst` renamed `.mem` | Already exists | Readable after `zstd -d` |
+| C. age(1) encrypted wrapper | Battle-tested CLI | External binary, worse size, not memlayer-native |
 
 ---
 
@@ -408,9 +457,10 @@ V8 already allows arbitrary `relation_type`.
 
 - CSS: Playwright or a static HTML snapshot is optional; at minimum a
   comment + manual 390px check in the implementation PR.
-- `mem_archive`: round-trip fixture; reject truncated files; reject
-  wrong magic; inner JSON not present as UTF-8 substring in the `.mem`
-  bytes (legibility test).
+- `mem_archive`: round-trip default and seeded; wrong seed fails; missing
+  seed on encrypted file fails; truncated/wrong magic fail; inner
+  “memlayer.archive” must not appear as UTF-8 in the file bytes; seeded
+  `.mem` smaller than pretty JSON+zstd-3 of the same rows.
 - Eval: unit test that `cmd_eval` errors when dataset missing; smoke
   test with a tiny in-crate fixture (2 memories, 1 query) asserting
   non-synthetic `total_queries == 1`.
@@ -435,7 +485,8 @@ V8 already allows arbitrary `relation_type`.
 
 - Placeholders: none.
 - Scope: four PRs; one spec because the user asked for one plan.
-- Ambiguity: `.mem` is obfuscated, not encrypted — explicit.
+- Ambiguity: default `.mem` is obfuscated; `--seed-phrase` enables
+  Argon2id + XChaCha20-Poly1305 — explicit.
 - Ambiguity: LoCoMo target is “better than BM25-default real run”, not
   a hardcoded %.
 - Forbidden third-party name: must be absent from all new and touched

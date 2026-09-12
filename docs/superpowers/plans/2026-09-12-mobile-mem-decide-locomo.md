@@ -4,14 +4,14 @@
 
 **Goal:** Fix the clipped mobile `memlayer` header; add a native compressed `.mem` archive; make LoCoMo eval actually run hybrid+facts retrieval; add Decide plus auto resolution on conflicting memories — without naming any third-party memory product anywhere in the tree.
 
-**Architecture:** Four sequential PRs. CSS-only header fix. Archive codec in `memlayer-sync` (MLYR + zstd + XOR keystream) with daemon snapshot/import. Eval CLI calls `runner::run` and defaults to `default_profile(Locomo)`. Save path keeps `ConflictsWith` rows, queues `resolve_worker`; `Decide` RPC retrieves, judges open conflicts, returns a structured recommendation and may write `type=resolution`.
+**Architecture:** Four sequential PRs. CSS-only header fix. Archive codec in `memlayer-sync` (MLYR + MessagePack + zstd-19; default XOR wrap; optional Argon2id + XChaCha20-Poly1305 from a seed phrase) with daemon snapshot/import. Eval CLI calls `runner::run` and defaults to `default_profile(Locomo)`. Save path keeps `ConflictsWith` rows, queues `resolve_worker`; `Decide` RPC retrieves, judges open conflicts, returns a structured recommendation and may write `type=resolution`.
 
-**Tech Stack:** Starlight CSS, Rust, proto3/tonic, rusqlite, zstd, SHA-256, existing `ClaudeClient` shell-out, rmcp MCP tools.
+**Tech Stack:** Starlight CSS, Rust, proto3/tonic, rusqlite, zstd 19, MessagePack (`rmp-serde`), Argon2id, XChaCha20-Poly1305, SHA-256, existing `ClaudeClient` shell-out, rmcp MCP tools.
 
 ## Global Constraints
 
 - Never write the substring matching a third-party memory product name in code, comments, prompts, docs, CLI help, or commits. Use **Decide**, **resolution judge**, **memlayer archive**.
-- `.mem` v1 is **obfuscation**, not encryption. Do not document it as encrypted.
+- Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed.
 - Migrations: no new SQL file unless a later task proves V8 `observation_relations.relation_type` is insufficient. Prefer `resolved_by` as a relation string.
 - Write-thread: all DB mutations go through `WriteRequest` / `WriteRequest::Custom`.
 - Worker pools: `try_queue` drops on full; never block save.
@@ -125,14 +125,28 @@ git commit -m "fix(website): keep full memlayer brand visible on mobile"
 - Modify: `crates/memlayer-sync/src/error.rs`
 
 **Interfaces:**
-- Consumes: `zstd`, `sha2`, `serde_json`
+- Consumes: `zstd` 19, `sha2`, `rmp-serde`, `argon2`, `chacha20poly1305`, `zeroize`, `unicode-normalization`
 - Produces:
   - `pub const MAGIC: &[u8; 4] = b"MLYR";`
   - `pub const ARCHIVE_VERSION: u16 = 1;`
+  - `pub const HEADER_LEN: usize = 88;`
+  - `pub const FLAG_ENCRYPTED: u8 = 0x01;`
   - `pub struct ArchivePayload { ... }`
-  - `pub fn encode(payload: &ArchivePayload, nonce: [u8; 16]) -> Result<Vec<u8>>`
-  - `pub fn decode(bytes: &[u8]) -> Result<ArchivePayload>`
-  - `pub fn keystream_xor(data: &[u8], nonce: &[u8; 16]) -> Vec<u8>`
+  - `pub struct EncodeParams { pub salt: [u8; 16], pub aead_nonce: [u8; 24], pub seed: Option<String> }`
+  - `pub fn encode(payload: &ArchivePayload, params: &EncodeParams) -> Result<Vec<u8>>`
+  - `pub fn decode(bytes: &[u8], seed: Option<&str>) -> Result<ArchivePayload>`
+  - `pub fn is_encrypted(bytes: &[u8]) -> Result<bool>`
+  - `pub fn normalize_seed(seed: &str) -> Result<String>`
+
+- [ ] **Step 0: Add crate deps** in `crates/memlayer-sync/Cargo.toml`:
+
+```toml
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rmp-serde = "1.3"
+zeroize = { version = "1", features = ["derive"] }
+unicode-normalization = "0.1"
+```
 
 - [ ] **Step 1: Add errors**
 
@@ -150,6 +164,15 @@ Truncated,
 
 #[error("memlayer archive checksum mismatch")]
 ChecksumMismatch,
+
+#[error("seed phrase must be at least 12 characters after trim")]
+SeedTooShort,
+
+#[error("this archive requires a seed phrase (--seed-phrase or --seed-file)")]
+SeedRequired,
+
+#[error("invalid seed phrase or corrupt archive")]
+InvalidSeed,
 ```
 
 - [ ] **Step 2: Write failing tests in `mem_archive.rs`**
@@ -174,36 +197,73 @@ mod tests {
         }
     }
 
+    fn params(seed: Option<&str>) -> EncodeParams {
+        EncodeParams {
+            salt: [7u8; 16],
+            aead_nonce: [9u8; 24],
+            seed: seed.map(|s| s.to_string()),
+        }
+    }
+
     #[test]
-    fn round_trip() {
-        let nonce = [7u8; 16];
-        let bytes = encode(&sample(), nonce).unwrap();
+    fn round_trip_default() {
+        let bytes = encode(&sample(), &params(None)).unwrap();
         assert_eq!(&bytes[..4], b"MLYR");
-        let back = decode(&bytes).unwrap();
+        assert_eq!(bytes[6] & FLAG_ENCRYPTED, 0);
+        let back = decode(&bytes, None).unwrap();
         assert_eq!(back.project, "demo");
     }
 
     #[test]
-    fn not_legible_utf8_json() {
-        let mut p = sample();
-        p.observations = vec![]; // payload still has "memlayer.archive" inside JSON
-        let bytes = encode(&p, [1u8; 16]).unwrap();
+    fn round_trip_seeded() {
+        let seed = "correct horse battery staple extra";
+        let bytes = encode(&sample(), &params(Some(seed))).unwrap();
+        assert_ne!(bytes[6] & FLAG_ENCRYPTED, 0);
+        let back = decode(&bytes, Some(seed)).unwrap();
+        assert_eq!(back.project, "demo");
+        assert!(matches!(decode(&bytes, None), Err(SyncError::SeedRequired)));
+        assert!(matches!(
+            decode(&bytes, Some("wrong seed phrase!!")),
+            Err(SyncError::InvalidSeed)
+        ));
+    }
+
+    #[test]
+    fn not_legible() {
+        let bytes = encode(&sample(), &params(None)).unwrap();
         let as_str = String::from_utf8_lossy(&bytes);
-        assert!(!as_str.contains("memlayer.archive"), "inner JSON leaked: {as_str:?}");
-        assert!(!as_str.contains("\"project\""));
+        assert!(!as_str.contains("memlayer.archive"));
+        assert!(!as_str.contains("demo"));
+    }
+
+    #[test]
+    fn smaller_than_json_zstd3() {
+        let mut p = sample();
+        p.observations = (0..50)
+            .map(|i| serde_json::json!({"id": i, "title": format!("obs-{i}-repeated-text")}))
+            .collect();
+        let mem = encode(&p, &params(None)).unwrap();
+        let json = serde_json::to_vec_pretty(&p).unwrap();
+        let z3 = zstd::encode_all(&json[..], 3).unwrap();
+        assert!(mem.len() < z3.len(), "mem {} vs json.zst-3 {}", mem.len(), z3.len());
     }
 
     #[test]
     fn rejects_bad_magic() {
-        let mut b = encode(&sample(), [2u8; 16]).unwrap();
+        let mut b = encode(&sample(), &params(None)).unwrap();
         b[0] = b'X';
-        assert!(matches!(decode(&b), Err(SyncError::NotArchive)));
+        assert!(matches!(decode(&b, None), Err(SyncError::NotArchive)));
     }
 
     #[test]
     fn rejects_truncated() {
-        let b = encode(&sample(), [3u8; 16]).unwrap();
-        assert!(decode(&b[..20]).is_err());
+        let b = encode(&sample(), &params(None)).unwrap();
+        assert!(decode(&b[..20], None).is_err());
+    }
+
+    #[test]
+    fn seed_too_short() {
+        assert!(encode(&sample(), &params(Some("short"))).is_err());
     }
 }
 ```
@@ -219,17 +279,30 @@ Expected: FAIL, `mem_archive` module missing.
 - [ ] **Step 4: Implement codec**
 
 ```rust
-//! memlayer `.mem` archive: MLYR container, zstd, SHA-256, XOR keystream.
+//! memlayer `.mem` archive: MLYR + MessagePack + zstd-19.
+//! Default: XOR obfuscation. Optional: Argon2id + XChaCha20-Poly1305.
 
+use argon2::{Algorithm, Argon2, Params, Version};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit},
+    Key, XChaCha20Poly1305, XNonce,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
+use zeroize::Zeroizing;
 
 use crate::error::{Result, SyncError};
 
 pub const MAGIC: &[u8; 4] = b"MLYR";
 pub const ARCHIVE_VERSION: u16 = 1;
-const HEADER_LEN: usize = 64;
+pub const HEADER_LEN: usize = 88;
+pub const FLAG_ENCRYPTED: u8 = 0x01;
+const ZSTD_LEVEL: i32 = 19;
 const KEY_DOMAIN: &[u8] = b"memlayer.mem.v1\0";
+const ARGON2_M_KIB: u32 = 64 * 1024;
+const ARGON2_T: u32 = 3;
+const ARGON2_P: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ArchivePayload {
@@ -238,22 +311,48 @@ pub struct ArchivePayload {
     pub schema_version: i32,
     pub exported_at: String,
     pub project: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observations: Vec<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prompts: Vec<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facts: Vec<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relations: Vec<serde_json::Value>,
 }
 
-pub fn keystream_xor(data: &[u8], nonce: &[u8; 16]) -> Vec<u8> {
+pub struct EncodeParams {
+    pub salt: [u8; 16],
+    pub aead_nonce: [u8; 24],
+    pub seed: Option<String>,
+}
+
+pub fn normalize_seed(seed: &str) -> Result<String> {
+    let n: String = seed.nfc().collect();
+    let n = n.trim().trim_end_matches(['\n', '\r']).to_string();
+    if n.chars().count() < 12 {
+        return Err(SyncError::SeedTooShort);
+    }
+    Ok(n)
+}
+
+fn derive_key(seed: &str, salt: &[u8; 16]) -> Result<Zeroizing<[u8; 32]>> {
+    let params = Params::new(ARGON2_M_KIB, ARGON2_T, ARGON2_P, Some(32))
+        .map_err(|e| SyncError::Compress(e.to_string()))?;
+    let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut out = Zeroizing::new([0u8; 32]);
+    argon
+        .hash_password_into(seed.as_bytes(), salt, &mut out[..])
+        .map_err(|_| SyncError::InvalidSeed)?;
+    Ok(out)
+}
+
+pub fn keystream_xor(data: &[u8], salt: &[u8; 16]) -> Vec<u8> {
     let mut key = Sha256::new();
     key.update(KEY_DOMAIN);
-    key.update(nonce);
+    key.update(salt);
     let key = key.finalize();
     let mut out = Vec::with_capacity(data.len());
     let mut i = 0u64;
@@ -273,26 +372,53 @@ pub fn keystream_xor(data: &[u8], nonce: &[u8; 16]) -> Vec<u8> {
     out
 }
 
-pub fn encode(payload: &ArchivePayload, nonce: [u8; 16]) -> Result<Vec<u8>> {
-    let json = serde_json::to_vec(payload)?;
-    let checksum = Sha256::digest(&json);
-    let compressed = zstd::encode_all(&json[..], 3)
-        .map_err(|e| SyncError::Compress(e.to_string()))?;
-    let obfuscated = keystream_xor(&compressed, &nonce);
-    let mut out = Vec::with_capacity(HEADER_LEN + obfuscated.len());
+fn pack_header(flags: u8, inner_len: u64, checksum: &[u8], salt: &[u8; 16], aead_nonce: &[u8; 24]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(HEADER_LEN);
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&ARCHIVE_VERSION.to_le_bytes());
-    out.push(0); // flags
-    out.push(0); // reserved
-    out.extend_from_slice(&(json.len() as u64).to_le_bytes());
-    out.extend_from_slice(&checksum);
-    out.extend_from_slice(&nonce);
+    out.push(flags);
+    out.push(0);
+    out.extend_from_slice(&inner_len.to_le_bytes());
+    out.extend_from_slice(checksum);
+    out.extend_from_slice(salt);
+    out.extend_from_slice(aead_nonce);
     debug_assert_eq!(out.len(), HEADER_LEN);
-    out.extend_from_slice(&obfuscated);
+    out
+}
+
+pub fn is_encrypted(bytes: &[u8]) -> Result<bool> {
+    if bytes.len() < HEADER_LEN {
+        return Err(SyncError::Truncated);
+    }
+    if &bytes[..4] != MAGIC {
+        return Err(SyncError::NotArchive);
+    }
+    Ok(bytes[6] & FLAG_ENCRYPTED != 0)
+}
+
+pub fn encode(payload: &ArchivePayload, params: &EncodeParams) -> Result<Vec<u8>> {
+    let inner = rmp_serde::to_vec_named(payload).map_err(|e| SyncError::Compress(e.to_string()))?;
+    let checksum = Sha256::digest(&inner);
+    let compressed = zstd::encode_all(&inner[..], ZSTD_LEVEL)
+        .map_err(|e| SyncError::Compress(e.to_string()))?;
+    let mut flags = 0u8;
+    let body = if let Some(raw) = &params.seed {
+        flags |= FLAG_ENCRYPTED;
+        let seed = normalize_seed(raw)?;
+        let key = derive_key(&seed, &params.salt)?;
+        let cipher = XChaCha20Poly1305::new(Key::from_slice(&key[..]));
+        cipher
+            .encrypt(XNonce::from_slice(&params.aead_nonce), compressed.as_ref())
+            .map_err(|_| SyncError::InvalidSeed)?
+    } else {
+        keystream_xor(&compressed, &params.salt)
+    };
+    let mut out = pack_header(flags, inner.len() as u64, &checksum, &params.salt, &params.aead_nonce);
+    out.extend_from_slice(&body);
     Ok(out)
 }
 
-pub fn decode(bytes: &[u8]) -> Result<ArchivePayload> {
+pub fn decode(bytes: &[u8], seed: Option<&str>) -> Result<ArchivePayload> {
     if bytes.len() < HEADER_LEN {
         return Err(SyncError::Truncated);
     }
@@ -303,22 +429,39 @@ pub fn decode(bytes: &[u8]) -> Result<ArchivePayload> {
     if version != ARCHIVE_VERSION {
         return Err(SyncError::UnsupportedVersion(version));
     }
+    let encrypted = bytes[6] & FLAG_ENCRYPTED != 0;
     let uncompressed_len = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
     let want_sum = &bytes[16..48];
-    let nonce: [u8; 16] = bytes[48..64].try_into().unwrap();
-    let compressed = keystream_xor(&bytes[64..], &nonce);
-    let json = zstd::decode_all(&compressed[..])
+    let salt: [u8; 16] = bytes[48..64].try_into().unwrap();
+    let aead_nonce: [u8; 24] = bytes[64..88].try_into().unwrap();
+    let body = &bytes[88..];
+    let compressed = if encrypted {
+        let Some(raw) = seed else {
+            return Err(SyncError::SeedRequired);
+        };
+        let seed = normalize_seed(raw)?;
+        let key = derive_key(&seed, &salt)?;
+        let cipher = XChaCha20Poly1305::new(Key::from_slice(&key[..]));
+        cipher
+            .decrypt(XNonce::from_slice(&aead_nonce), body)
+            .map_err(|_| SyncError::InvalidSeed)?
+    } else {
+        keystream_xor(body, &salt)
+    };
+    let inner = zstd::decode_all(&compressed[..])
         .map_err(|e| SyncError::Decompress(e.to_string()))?;
-    if json.len() != uncompressed_len {
+    if inner.len() != uncompressed_len {
         return Err(SyncError::CorruptChunk("length mismatch".into()));
     }
-    let got = Sha256::digest(&json);
+    let got = Sha256::digest(&inner);
     if got.as_slice() != want_sum {
         return Err(SyncError::ChecksumMismatch);
     }
-    Ok(serde_json::from_slice(&json)?)
+    rmp_serde::from_slice(&inner).map_err(|e| SyncError::Compress(e.to_string()))
 }
 ```
+
+If `Argon2::hash_password_into` is not on the 0.5 API, use the crate’s low-level `hash_password_into` associated with the constructed `Argon2` instance (same parameters). Do not add a second KDF.
 
 Export the module from `lib.rs`: `pub mod mem_archive;`
 
@@ -348,8 +491,8 @@ git commit -m "feat(sync): add MLYR .mem archive codec"
 - Modify: `crates/memlayer-daemon/src/service.rs`, `lib.rs`
 
 **Interfaces:**
-- Consumes: `mem_archive::{encode,decode,ArchivePayload}`, write thread Custom, `rand` or `getrandom` for nonce
-- Produces: `ExportMem` / `ImportMem` RPCs
+- Consumes: `mem_archive::{encode,decode,is_encrypted,ArchivePayload,EncodeParams}`, write thread Custom, `getrandom` for salt + aead nonce
+- Produces: `ExportMem` / `ImportMem` RPCs (seed_phrase optional on both requests)
 
 - [ ] **Step 1: Add proto messages** (exact fields from spec §4.3) and rpcs:
 
@@ -365,18 +508,19 @@ Regenerate via existing `memlayer-proto` build.rs (`cargo build -p memlayer-prot
 `mem_export.rs` must:
 
 1. Reject `file` unless `ends_with(".mem")`.
-2. Open read conn for project; SELECT observations (all columns used by JSON), sessions, prompts, facts, observation_relations.
+2. Open read conn for project; SELECT observations, sessions, prompts, facts, observation_relations (no embedding blobs).
 3. Fill `ArchivePayload { schema_version: 8, exported_at: Utc::now().to_rfc3339(), ... }`.
-4. Nonce: 16 random bytes (`getrandom::getrandom` or `uuid` bytes).
-5. `std::fs::write` atomically (write tempfile in same dir, rename).
+4. Fill `EncodeParams`: 16-byte salt + 24-byte XChaCha nonce from `getrandom`. Pass `req.seed_phrase` if non-empty.
+5. `std::fs::write` atomically (write tempfile in same dir, rename). Never `tracing` the seed.
 6. Return counts + byte size.
 
 Import:
 
-1. `decode` file.
-2. If `mode == "replace"`, delete project rows via write thread then insert.
-3. If `merge` (default), upsert observations by `sync_id` (`INSERT ... ON CONFLICT(sync_id)` or select-then-insert Custom).
-4. Re-queue embed for imported ids if embed pool exists (best-effort).
+1. Peek `is_encrypted`; if true and `seed_phrase` empty, return `InvalidArgument` “this archive requires a seed phrase”.
+2. `decode(&bytes, seed_phrase.as_deref())`.
+3. If `mode == "replace"`, delete project rows via write thread then insert.
+4. If `merge` (default), upsert observations by `sync_id`.
+5. Re-queue embed for imported ids if embed pool exists (best-effort).
 
 - [ ] **Step 3: Unit-test codec integration with a tempfile in daemon tests** if daemon tests can open a temp registry; otherwise test import/export functions against `ProjectRegistry` in `memlayer-tests` later. Minimum: `decode(encode(payload))` already in Task 2.
 
@@ -397,7 +541,7 @@ git commit -m "feat(daemon): ExportMem and ImportMem RPCs"
 - Modify: `crates/memlayer-cli/src/lib.rs` (`pub mod cmd_mem`)
 
 **Interfaces:**
-- Consumes: `ExportMemRequest { project_name, file }`
+- Consumes: `ExportMemRequest { project_name, file, seed_phrase }`
 - Produces: user-facing verbs
 
 - [ ] **Step 1: Clap**
@@ -423,6 +567,12 @@ pub struct MemExportArgs {
     pub out: PathBuf,
     #[arg(long)]
     pub project: Option<String>,
+    /// Encrypt the archive with this seed phrase (same phrase decrypts on import).
+    #[arg(long, conflicts_with = "seed_file")]
+    pub seed_phrase: Option<String>,
+    /// Read the seed phrase from a file (preferred; avoids `ps` leakage).
+    #[arg(long)]
+    pub seed_file: Option<PathBuf>,
 }
 
 pub struct MemImportArgs {
@@ -431,6 +581,10 @@ pub struct MemImportArgs {
     pub project: Option<String>,
     #[arg(long, default_value = "merge")]
     pub mode: String,
+    #[arg(long, conflicts_with = "seed_file")]
+    pub seed_phrase: Option<String>,
+    #[arg(long)]
+    pub seed_file: Option<PathBuf>,
 }
 ```
 
@@ -450,6 +604,23 @@ fn mem_export_parses() {
         _ => panic!("expected mem"),
     }
 }
+
+#[test]
+fn mem_export_seed_file_parses() {
+    let cli = Cli::try_parse_from([
+        "memlayer", "mem", "export", "--out", "x.mem", "--seed-file", "phrase.txt",
+    ]).unwrap();
+    match cli.command {
+        Command::Mem(a) => match a.verb {
+            MemVerb::Export(e) => {
+                assert_eq!(e.seed_file.as_deref(), Some(std::path::Path::new("phrase.txt")));
+                assert!(e.seed_phrase.is_none());
+            }
+            _ => panic!("expected export"),
+        },
+        _ => panic!("expected mem"),
+    }
+}
 ```
 
 - [ ] **Step 3: Dispatch** like `cmd_sync.rs` (open client, call RPC).
@@ -458,8 +629,12 @@ fn mem_export_parses() {
 
 ```bash
 memlayer mem export --out backup.mem
+memlayer mem export --out secret.mem --seed-file ./phrase.txt
 memlayer mem import backup.mem
+memlayer mem import secret.mem --seed-file ./phrase.txt
 ```
+
+CLI must read `--seed-file` (trim newline), reject both flags together, pass the string only in the gRPC request, and never print it.
 
 - [ ] **Step 5: Commit**
 
@@ -863,7 +1038,7 @@ git commit -m "docs: document .mem archives and decide"
 
 Placeholder scan: no TBD. Types: `ArchivePayload`, `ExportMem*`, `Decide*`, `ResolveJob` used consistently.
 
-**Out of scope leftover:** passphrase-encrypted `.mem`; dense conflict candidate search; claiming a LoCoMo % in README.
+**Out of scope leftover:** BIP39 wordlist validation; dense conflict candidate search; claiming a LoCoMo % in README.
 
 ---
 
