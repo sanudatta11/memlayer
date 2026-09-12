@@ -5,7 +5,7 @@ import sitemap from '@astrojs/sitemap';
 
 const site = 'https://memlayer.org';
 const description =
-	'Persistent memory for AI coding agents — local, per-project, no cloud.';
+	'Persistent memory for AI coding agents: local, per-project, no cloud.';
 
 // https://astro.build/config
 export default defineConfig({
@@ -43,6 +43,7 @@ export default defineConfig({
 						{ label: 'Wire into your agent', slug: 'docs/agents' },
 						{ label: 'Everyday commands', slug: 'docs/commands' },
 						{ label: 'Config', slug: 'docs/config' },
+						{ label: 'LoCoMo eval', slug: 'docs/locomo' },
 						{ label: 'Troubleshooting', slug: 'docs/troubleshooting' },
 					],
 				},
@@ -80,7 +81,7 @@ export default defineConfig({
 					tag: 'meta',
 					attrs: {
 						property: 'og:image:alt',
-						content: 'memlayer — persistent memory for AI coding agents',
+						content: 'memlayer: persistent memory for AI coding agents',
 					},
 				},
 				{
@@ -158,6 +159,17 @@ export default defineConfig({
 		}),
 		sitemap({
 			filter: (page) => !page.includes('/404'),
+			changefreq: 'weekly',
+			priority: 0.7,
+			lastmod: new Date(),
+			serialize(item) {
+				// Home page gets highest priority; docs share the default.
+				const url = item.url.replace(/\/$/, '') || item.url;
+				if (url === site || url === `${site}/`) {
+					return { ...item, priority: 1.0, changefreq: 'weekly' };
+				}
+				return item;
+			},
 		}),
 	],
 });

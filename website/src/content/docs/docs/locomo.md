@@ -36,7 +36,7 @@ memlayer eval --smoke --benchmark staleness --no-supersede --save-scorecard eval
 | Maharana et al. ACL 2024 | Token F1 on gold answers | Human 87.9, GPT-4-turbo 51.6 overall |
 | Staleness `superseded_served_pct` | Superseded value served without gold | Lower is better; compare default vs `--no-supersede` |
 
-Public locomo10 LLM-judge tables usually land around **67–80%** overall when
+Public locomo10 LLM-judge tables usually land around **67-80%** overall when
 adversarial items are dropped; some re-runs exceed **90%** with a stronger
 judge or a different protocol. Retrieval **R@5** in the low-to-mid 90s is a
 different question (was the evidence fetched?).

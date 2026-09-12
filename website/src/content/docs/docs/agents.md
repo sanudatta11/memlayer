@@ -22,7 +22,7 @@ Launched as `memlayer mcp` (stdio; do not run it by hand except for debugging):
 - `memory_add`
 - `memory_facts`
 - `memory_health`
-- `memory_decide` — recommend a decision; auto-runs the resolution judge on open conflicts
+- `memory_decide`: recommend a decision; auto-runs the resolution judge on open conflicts
 
 ## Config files touched by install
 

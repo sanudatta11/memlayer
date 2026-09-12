@@ -24,5 +24,5 @@ memlayer doctor
 
 ## Next steps
 
-- [Getting started](/docs/getting-started/) — save and search
-- [Wire into your agent](/docs/agents/) — MCP and skills
+- [Getting started](/docs/getting-started/): save and search
+- [Wire into your agent](/docs/agents/): MCP and skills

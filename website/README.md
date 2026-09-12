@@ -40,6 +40,8 @@ Do these once before (or right after) the first successful `Pages` deploy on `ma
 5. Confirm crawlability
    - `https://memlayer.org/robots.txt` lists the sitemap
    - `https://memlayer.org/sitemap-index.xml` returns 200 after deploy
+   - `sitemap-0.xml` lists every docs page (home + getting-started, install,
+     agents, commands, config, locomo, troubleshooting); `/404` is excluded
 
 `public/CNAME` already contains `memlayer.org` for the Pages custom domain.
 
