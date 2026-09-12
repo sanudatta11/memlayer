@@ -198,6 +198,8 @@ message ImportMemResponse {
   int64 facts_imported = 4;
   int64 relations_imported = 5;
   int64 skipped = 6;
+  bool seed_encrypted = 7;   // peeked from archive flag bit 0
+  bool seed_ignored = 8;     // true when a seed was sent but the file was not encrypted
 }
 ```
 
@@ -242,9 +244,67 @@ JSON `--output json` includes `"seed_encrypted": false` and
 `--help` for `mem export` must mention both flags in the command
 about/long_help (same wording, not only after a run).
 
-Do not print the phrase itself. Do not skip the unencrypted note when
-stdout is not a TTY — users who script exports still need to know the
-option exists.
+**Import UX (required):** the CLI peeks the `.mem` header locally
+(`is_encrypted`) *before* the import RPC so messages match the file,
+not guesswork.
+
+**Encrypted file + no `--seed-phrase` / `--seed-file` → always a hard
+error** (TTY and pipes). Do not prompt. Do not attempt decrypt. Exit
+code = usage/invalid argument (same family as other CLI flag errors).
+Stderr (exact shape; substitute the user path for `FILE.mem`):
+
+```
+error: this archive is seed-encrypted and cannot be imported without the seed phrase.
+       pass the same phrase used at export:
+         memlayer mem import FILE.mem --seed-file ./phrase.txt
+         memlayer mem import FILE.mem --seed-phrase 'your phrase here'
+```
+
+JSON `--output json` on this failure:
+
+```json
+{"error":"seed_required","message":"this archive is seed-encrypted and cannot be imported without the seed phrase","seed_encrypted":true}
+```
+
+The daemon must return the same failure if the CLI skipped the peek
+(`decode(..., None)` on an encrypted body → `SyncError::SeedRequired` →
+gRPC `InvalidArgument` with that message). Never surface zstd/AEAD
+internals (“tag mismatch”, “invalid utf-8”) for this case.
+
+| File | Flags | Behavior |
+|---|---|---|
+| Encrypted | no seed | **Error above.** No prompt, no partial import. |
+| Encrypted | seed present | Import. Wrong seed → “invalid seed phrase or corrupt archive” (do not say which). |
+| Not encrypted | no seed | Import. Stderr note that the file is obfuscated only. |
+| Not encrypted | seed present | Import anyway. Stderr warn: seed was ignored because the archive is not seed-encrypted. Do not fail (scripts may always pass `--seed-file`). |
+
+Success notes (stderr; JSON gets `seed_encrypted` + `hint`):
+
+- **Encrypted import succeeded:**
+
+```
+note: imported a seed-encrypted archive.
+      future imports of this file need the same --seed-file or --seed-phrase.
+```
+
+- **Unencrypted import succeeded:**
+
+```
+note: archive is not seed-encrypted (obfuscated only).
+      if you expected encryption, re-export with --seed-file or --seed-phrase.
+```
+
+- **Encrypted, missing seed (required error):**
+
+```
+error: this archive is seed-encrypted and cannot be imported without the seed phrase.
+       pass the same phrase used at export:
+         memlayer mem import FILE.mem --seed-file ./phrase.txt
+         memlayer mem import FILE.mem --seed-phrase 'your phrase here'
+```
+
+`mem import --help` must list both seed flags. Never print the phrase.
+Never skip the unencrypted success note when stdout is not a TTY.
 
 Reject paths that do not end in `.mem`. Magic mismatch → clear error
 “not a memlayer archive”.

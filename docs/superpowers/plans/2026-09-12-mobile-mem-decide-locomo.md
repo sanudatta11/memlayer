@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Never write the substring matching a third-party memory product name in code, comments, prompts, docs, CLI help, or commits. Use **Decide**, **resolution judge**, **memlayer archive**.
-- Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed. After every successful `mem export`, print the seed-encryption note (unencrypted vs encrypted variant) to stderr.
+- Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed. After every successful `mem export` and `mem import`, print the seed-encryption note to stderr. Importing a seed-encrypted file without `--seed-file`/`--seed-phrase` is a hard error with a dedicated message (no TTY prompt, no AEAD/zstd internals).
 - Migrations: no new SQL file unless a later task proves V8 `observation_relations.relation_type` is insufficient. Prefer `resolved_by` as a relation string.
 - Write-thread: all DB mutations go through `WriteRequest` / `WriteRequest::Custom`.
 - Worker pools: `try_queue` drops on full; never block save.
@@ -168,7 +168,7 @@ ChecksumMismatch,
 #[error("seed phrase must be at least 12 characters after trim")]
 SeedTooShort,
 
-#[error("this archive requires a seed phrase (--seed-phrase or --seed-file)")]
+#[error("this archive is seed-encrypted and cannot be imported without the seed phrase")]
 SeedRequired,
 
 #[error("invalid seed phrase or corrupt archive")]
@@ -222,10 +222,22 @@ mod tests {
         let back = decode(&bytes, Some(seed)).unwrap();
         assert_eq!(back.project, "demo");
         assert!(matches!(decode(&bytes, None), Err(SyncError::SeedRequired)));
+        assert!(format!("{}", decode(&bytes, None).unwrap_err())
+            .contains("cannot be imported without the seed phrase"));
         assert!(matches!(
             decode(&bytes, Some("wrong seed phrase!!")),
             Err(SyncError::InvalidSeed)
         ));
+    }
+
+    #[test]
+    fn encrypted_without_seed_is_seed_required_not_corrupt() {
+        let bytes = encode(&sample(), &params(Some("correct horse battery staple extra"))).unwrap();
+        let err = decode(&bytes, None).unwrap_err();
+        assert!(matches!(err, SyncError::SeedRequired));
+        let s = err.to_string();
+        assert!(!s.to_lowercase().contains("aead"));
+        assert!(!s.to_lowercase().contains("checksum"));
     }
 
     #[test]
@@ -516,11 +528,15 @@ Regenerate via existing `memlayer-proto` build.rs (`cargo build -p memlayer-prot
 
 Import:
 
-1. Peek `is_encrypted`; if true and `seed_phrase` empty, return `InvalidArgument` “this archive requires a seed phrase”.
-2. `decode(&bytes, seed_phrase.as_deref())`.
-3. If `mode == "replace"`, delete project rows via write thread then insert.
-4. If `merge` (default), upsert observations by `sync_id`.
-5. Re-queue embed for imported ids if embed pool exists (best-effort).
+1. Peek `is_encrypted`. If true and `seed_phrase` is empty, **do not decode**. Return `tonic::Status::invalid_argument` with:
+   `this archive is seed-encrypted and cannot be imported without the seed phrase. pass --seed-file or --seed-phrase (the same phrase used at export).`
+   Map `SyncError::SeedRequired` to this same status if decode is reached anyway.
+2. If false and seed was sent, still decode without the seed (ignore extra seed). Include `warning_seed_ignored` in logs only as a boolean — never the phrase.
+3. `decode(&bytes, seed_phrase.as_deref())` when encrypted.
+4. If `mode == "replace"`, delete project rows via write thread then insert.
+5. If `merge` (default), upsert observations by `sync_id`.
+6. Re-queue embed for imported ids if embed pool exists (best-effort).
+7. Response includes `bool seed_encrypted` so the CLI can print the matching note even if it did not peek.
 
 - [ ] **Step 3: Unit-test codec integration with a tempfile in daemon tests** if daemon tests can open a temp registry; otherwise test import/export functions against `ProjectRegistry` in `memlayer-tests` later. Minimum: `decode(encode(payload))` already in Task 2.
 
@@ -560,6 +576,7 @@ pub enum MemVerb {
     /// Default is obfuscated only. Pass --seed-file or --seed-phrase to encrypt.
     Export(MemExportArgs),
     /// Read a .mem snapshot into the project.
+    /// Seed-encrypted files require --seed-file or --seed-phrase.
     Import(MemImportArgs),
 }
 
@@ -657,6 +674,20 @@ note: archive is seed-encrypted. import needs the same --seed-file or --seed-phr
 
 After a successful `export` RPC, `eprintln!` `HINT_UNENCRYPTED` when neither seed flag was set, else `HINT_ENCRYPTED`. Always print (including non-TTY). JSON render adds `seed_encrypted` and `hint` (first line only).
 
+On `import`, peek with `is_encrypted(&std::fs::read(&file)?)?` before the RPC:
+
+```rust
+const ERR_SEED_REQUIRED: &str = "\
+error: this archive is seed-encrypted and cannot be imported without the seed phrase.
+       pass the same phrase used at export:
+         memlayer mem import FILE.mem --seed-file ./phrase.txt
+         memlayer mem import FILE.mem --seed-phrase 'your phrase here'";
+```
+
+If encrypted and both seed flags are absent: print `ERR_SEED_REQUIRED` (substitute `FILE.mem` with the path), return the usage exit code, **do not** call ImportMem. If the daemon still returns `SeedRequired`, print the same text (never the raw tonic message if it contains zstd/AEAD details).
+
+After successful import: `HINT_IMPORT_ENCRYPTED` or `HINT_IMPORT_UNENCRYPTED` from the spec; if `seed_ignored`, also warn that the phrase was unused.
+
 Unit test:
 
 ```rust
@@ -665,6 +696,16 @@ fn unencrypted_hint_mentions_seed_flags() {
     assert!(HINT_UNENCRYPTED.contains("--seed-file"));
     assert!(HINT_UNENCRYPTED.contains("--seed-phrase"));
     assert!(HINT_UNENCRYPTED.contains("not seed-encrypted"));
+}
+
+#[test]
+fn import_without_seed_error_is_actionable() {
+    assert!(ERR_SEED_REQUIRED.contains("seed-encrypted"));
+    assert!(ERR_SEED_REQUIRED.contains("cannot be imported without the seed phrase"));
+    assert!(ERR_SEED_REQUIRED.contains("--seed-file"));
+    assert!(ERR_SEED_REQUIRED.contains("--seed-phrase"));
+    assert!(!ERR_SEED_REQUIRED.to_lowercase().contains("aead"));
+    assert!(!ERR_SEED_REQUIRED.to_lowercase().contains("zstd"));
 }
 ```
 
