@@ -11,6 +11,7 @@ description = "Git-chunk sync, JSON, and Markdown export/import for memlayer."
 [dependencies]
 memlayer-core    = { path = "../memlayer-core" }
 memlayer-storage = { path = "../memlayer-storage" }
+rusqlite.workspace = true
 
 tokio       = { workspace = true, features = ["fs", "rt", "macros"] }
 serde       = { workspace = true }

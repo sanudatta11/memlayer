@@ -1721,6 +1721,26 @@ impl Memlayer for MemlayerService {
         Err(Status::unimplemented("SyncImportMd: implemented in Spec 3"))
     }
 
+    async fn export_mem(
+        &self,
+        req: Request<ExportMemRequest>,
+    ) -> Result<Response<ExportMemResponse>, Status> {
+        let _guard = self.enter_rpc();
+        map(self.check_writeable())?;
+        let resp = crate::mem_export::handle(&self.state, req.into_inner()).await?;
+        Ok(Response::new(resp))
+    }
+
+    async fn import_mem(
+        &self,
+        req: Request<ImportMemRequest>,
+    ) -> Result<Response<ImportMemResponse>, Status> {
+        let _guard = self.enter_rpc();
+        map(self.check_writeable())?;
+        let resp = crate::mem_import::handle(&self.state, req.into_inner()).await?;
+        Ok(Response::new(resp))
+    }
+
     async fn get_observation_relations(
         &self,
         req: Request<GetObservationRelationsRequest>,

@@ -16,6 +16,8 @@ pub mod server;
 pub mod service;
 pub mod signals;
 pub mod suggest_topic_key;
+pub mod mem_export;
+pub mod mem_import;
 pub mod sync_export;
 pub mod sync_status;
 pub mod tls;

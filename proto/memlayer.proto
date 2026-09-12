@@ -631,6 +631,38 @@ message SyncImportMdResponse {
   int64 files_skipped = 4;
 }
 
+// Portable memlayer archive (.mem)
+message ExportMemRequest {
+  string project_name = 1;
+  string file = 2;           // destination path; must end with .mem
+  optional string seed_phrase = 3;
+}
+message ExportMemResponse {
+  string file = 1;
+  int64 observations = 2;
+  int64 sessions = 3;
+  int64 prompts = 4;
+  int64 facts = 5;
+  int64 relations = 6;
+  int64 bytes = 7;
+}
+message ImportMemRequest {
+  string project_name = 1;
+  string file = 2;
+  string mode = 3;           // "merge" (default) | "replace"
+  optional string seed_phrase = 4;
+}
+message ImportMemResponse {
+  int64 observations_imported = 1;
+  int64 sessions_imported = 2;
+  int64 prompts_imported = 3;
+  int64 facts_imported = 4;
+  int64 relations_imported = 5;
+  int64 skipped = 6;
+  bool seed_encrypted = 7;
+  bool seed_ignored = 8;
+}
+
 // ---
 // Doctor (Spec 4)
 // ---
@@ -742,6 +774,8 @@ service Memlayer {
   rpc SyncImportJson         (SyncImportJsonRequest)         returns (SyncImportJsonResponse);
   rpc SyncExportMd           (SyncExportMdRequest)           returns (SyncExportMdResponse);
   rpc SyncImportMd           (SyncImportMdRequest)           returns (SyncImportMdResponse);
+  rpc ExportMem              (ExportMemRequest)              returns (ExportMemResponse);
+  rpc ImportMem              (ImportMemRequest)              returns (ImportMemResponse);
 
   // Doctor
   rpc Doctor                 (DoctorRequest)                 returns (DoctorResponse);
