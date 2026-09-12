@@ -38,6 +38,12 @@ def fmt_pct(value) -> str:
     return f"{float(value):.2f}"
 
 
+def fmt_ratio(value) -> str:
+    if value is None:
+        return "n/a"
+    return f"{float(value):.4f}"
+
+
 def render(card: dict, baselines: dict) -> str:
     protocol = infer_protocol(card)
     paper = baselines.get("metrics", {}).get("paper_token_f1", {})
@@ -46,14 +52,25 @@ def render(card: dict, baselines: dict) -> str:
     how = baselines.get("how_to_beat_or_compare", [])
     ml = baselines.get("memlayer_scorecard", {})
 
+    f1 = card.get("f1_score")
+    token_f1 = card.get("token_f1")
+    f1_note = "n/a (not emitted in scorecard 2.0)"
+    if f1 is not None:
+        f1_note = f"{fmt_pct(f1)}  (legacy field; not paper token F1)"
+    elif token_f1 is not None:
+        f1_note = f"{fmt_pct(token_f1)}  (token_f1)"
+
     lines = [
         "=== LoCoMo local analysis ===",
         f"scorecard benchmark:  {card.get('benchmark', '?')}",
+        f"scorecard_version:    {card.get('scorecard_version', '?')}",
         f"commit:               {card.get('commit_hash', '?')}",
         f"queries:              {card.get('total_queries', '?')}",
         f"correct:              {card.get('correct', '?')}",
         f"accuracy_pct:         {fmt_pct(card.get('accuracy_pct'))}  (memlayer judge / lexical pass rate)",
-        f"scorecard f1_score:   {fmt_pct(card.get('f1_score'))}  (derived from accuracy; not paper token F1)",
+        f"recall_at_k:          {fmt_ratio(card.get('recall_at_k'))}",
+        f"mrr:                  {fmt_ratio(card.get('mrr'))}",
+        f"f1 / token_f1:        {f1_note}",
         f"inferred protocol:    {protocol}",
         "",
         "--- Published reference (not a substitute for a matched harness) ---",
@@ -70,6 +87,16 @@ def render(card: dict, baselines: dict) -> str:
     ]
     for item in how:
         lines.append(f"  - {item}")
+
+    by_category = card.get("by_category") or {}
+    if by_category:
+        lines.extend(["", "By category:"])
+        for name in sorted(by_category.keys()):
+            stats = by_category[name] or {}
+            lines.append(
+                f"  {name}: {fmt_pct(stats.get('accuracy_pct'))}% "
+                f"({stats.get('correct', '?')}/{stats.get('total', '?')})"
+            )
 
     if protocol == "smoke-or-tiny-slice":
         lines.extend(
@@ -120,25 +147,46 @@ def self_check() -> int:
         "crates/memlayer-eval/baselines/locomo.json"
     ).read_text(encoding="utf-8"))
     smoke = {
+        "scorecard_version": "2.0",
         "benchmark": "locomo",
         "commit_hash": "test",
         "total_queries": 1,
         "correct": 1,
         "accuracy_pct": 100.0,
-        "f1_score": 1.0,
+        "recall_at_k": 1.0,
+        "mrr": 1.0,
+        "by_category": {"single_hop": {"total": 1, "correct": 1, "accuracy_pct": 100.0}},
+        "token_f1": None,
     }
     full = {
+        "scorecard_version": "2.0",
         "benchmark": "locomo",
         "commit_hash": "test",
         "total_queries": 1540,
         "correct": 1100,
         "accuracy_pct": 71.4,
-        "f1_score": 0.714,
+        "recall_at_k": 0.91,
+        "mrr": 0.72,
+        "by_category": {
+            "multi_hop": {"total": 100, "correct": 60, "accuracy_pct": 60.0},
+        },
+    }
+    # Legacy v1 shape without f1 must still render.
+    legacy_no_f1 = {
+        "benchmark": "locomo",
+        "commit_hash": "test",
+        "total_queries": 10,
+        "correct": 7,
+        "accuracy_pct": 70.0,
     }
     smoke_out = render(smoke, baselines)
     full_out = render(full, baselines)
+    legacy_out = render(legacy_no_f1, baselines)
     assert "WARNING" in smoke_out
+    assert "recall_at_k" in smoke_out
+    assert "By category:" in smoke_out
     assert "inside the typical LLM-judge band" in full_out
+    assert "n/a (not emitted" in legacy_out
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / "card.json"
         p.write_text(json.dumps(smoke), encoding="utf-8")

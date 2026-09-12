@@ -37,13 +37,14 @@
   },
   "memlayer_scorecard": {
     "smoke": "BM25 plus lexical contain on a one-query fixture. Wiring check only; not a LoCoMo score.",
-    "full": "Ingest locomo10.json, hybrid-rerank retrieval, LLM answer plus LLM judge. accuracy_pct is the judge pass rate. Scorecard f1_score is derived from accuracy, not paper token F1."
+    "full": "Ingest locomo10.json, hybrid-rerank retrieval, LLM answer plus LLM judge. accuracy_pct is the judge pass rate. Scorecard 2.0 reports recall_at_k and MRR as retrieval metrics; token-F1 is not emitted."
   },
   "how_to_beat_or_compare": [
     "Smoke (`make eval-locomo-smoke`) only proves the CLI harness. Never quote it against published numbers.",
     "Full (`make eval-locomo`) is the local analysis run. Optional LIMIT=N for a cheaper slice.",
     "Compare accuracy_pct only to other LLM-judge locomo10 runs that disclose judge model, k, and whether adversarial questions are included.",
-    "To beat paper F1 (51.6 overall / 87.9 human), you need token-overlap F1 on gold answers. memlayer does not emit that metric yet.",
+    "To beat paper F1 (51.6 overall / 87.9 human), you need token-overlap F1 on gold answers. memlayer does not emit that metric.",
+    "Use recall_at_k / MRR to diagnose retrieval; they are independent of the judge.",
     "To land in the published LLM-judge band (~67–80+), use the default LoCoMo profile (hybrid + rerank + evidence window), ingest speaker-prefixed turns, keep fact fusion on, and use a capable answer/judge model. Match the other system's category filter.",
     "Retrieval R@k is the right metric if you only care whether evidence was fetched; it will look stronger than judged QA."
   ]

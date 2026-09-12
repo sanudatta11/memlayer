@@ -87,6 +87,21 @@ pub struct QueryResult {
     /// disabled for the run; spec-task-23 / SC-7.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rerank_us: Option<u64>,
+    /// Benchmark-provided category label, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    /// 0-based rank of the first hit containing the gold answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gold_rank: Option<usize>,
+    pub hits_count: usize,
+}
+
+/// Per-category accuracy rollup.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct CategoryStats {
+    pub total: usize,
+    pub correct: usize,
+    pub accuracy_pct: f64,
 }
 
 /// Aggregated benchmark report.
@@ -97,6 +112,20 @@ pub struct RunReport {
     pub correct: usize,
     pub accuracy_pct: f64,
     pub mean_prompt_tokens: f64,
+    /// Sum of per-query prompt token estimates.
+    pub total_prompt_tokens: usize,
+    /// Fraction of queries whose gold answer appeared anywhere in the
+    /// retrieved set. Retrieval metric, independent of the judge verdict.
+    pub recall_at_k: f64,
+    /// Mean reciprocal rank of the gold answer within the retrieved set.
+    pub mrr: f64,
+    /// Per-category totals, sorted by category name.
+    #[serde(default)]
+    pub by_category: std::collections::BTreeMap<String, CategoryStats>,
+    /// Fraction of queries where the superseded value was served. Staleness
+    /// benchmark only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_served_pct: Option<f64>,
     pub retrieval_p50_ms: f64,
     pub retrieval_p95_ms: f64,
     pub end_to_end_p50_ms: f64,
@@ -118,7 +147,10 @@ impl RunReport {
         md.push_str("| Metric | Value |\n|---|---|\n");
         md.push_str(&format!("| Accuracy | {:.1}% ({}/{}) |\n",
             self.accuracy_pct, self.correct, self.total_queries));
+        md.push_str(&format!("| Recall@k | {:.4} |\n", self.recall_at_k));
+        md.push_str(&format!("| MRR | {:.4} |\n", self.mrr));
         md.push_str(&format!("| Mean prompt tokens | {:.0} |\n", self.mean_prompt_tokens));
+        md.push_str(&format!("| Total prompt tokens | {} |\n", self.total_prompt_tokens));
         md.push_str(&format!("| Retrieval p50 | {:.2}ms |\n", self.retrieval_p50_ms));
         md.push_str(&format!("| Retrieval p95 | {:.2}ms |\n", self.retrieval_p95_ms));
         md.push_str(&format!("| End-to-end p50 | {:.2}ms |\n", self.end_to_end_p50_ms));
@@ -128,6 +160,20 @@ impl RunReport {
         }
         if let Some(p95) = self.rerank_p95_ms {
             md.push_str(&format!("| Rerank p95 | {:.2}ms |\n", p95));
+        }
+        if let Some(pct) = self.superseded_served_pct {
+            md.push_str(&format!("| Superseded served | {:.1}% |\n", pct));
+        }
+        if !self.by_category.is_empty() {
+            md.push('\n');
+            md.push_str("## By category\n\n");
+            md.push_str("| category | correct | total | accuracy |\n|---|---|---|---|\n");
+            for (name, stats) in &self.by_category {
+                md.push_str(&format!(
+                    "| {} | {} | {} | {:.1}% |\n",
+                    name, stats.correct, stats.total, stats.accuracy_pct
+                ));
+            }
         }
         md.push('\n');
         md.push_str("## Per-query results\n\n");
@@ -362,6 +408,7 @@ pub async fn run(
 
         // Build answer prompt and count tokens.
         let (system, user_msg, prompt_tokens) = build_answer_prompt(&hits, &q.question);
+        let gold_rank = gold_rank(&q.gold_answer, &hits);
 
         let (model_answer, judge_prompt, correct) = if cfg.lexical_judge {
             let joined = hits.join("\n");
@@ -464,6 +511,9 @@ pub async fn run(
             end_to_end_us,
             prompt_tokens,
             rerank_us,
+            category: q.category.clone(),
+            gold_rank,
+            hits_count: hits.len(),
         });
     }
 
@@ -499,12 +549,17 @@ pub fn evidence_window_for_question(base: u8, question: &str) -> u8 {
     }
 }
 
-fn gold_in_hits(gold: &str, hits: &[String]) -> bool {
+/// 0-based rank of the first hit containing the gold answer, if any.
+fn gold_rank(gold: &str, hits: &[String]) -> Option<usize> {
     let g = gold.trim().to_ascii_lowercase();
     if g.is_empty() {
-        return false;
+        return None;
     }
-    hits.iter().any(|h| h.to_ascii_lowercase().contains(&g))
+    hits.iter().position(|h| h.to_ascii_lowercase().contains(&g))
+}
+
+fn gold_in_hits(gold: &str, hits: &[String]) -> bool {
+    gold_rank(gold, hits).is_some()
 }
 
 fn infer_project(kind: BenchmarkKind, query_id: &str) -> String {
@@ -546,11 +601,46 @@ fn build_report(
     let correct = results.iter().filter(|r| r.correct).count();
     let accuracy_pct = if total == 0 { 0.0 } else { correct as f64 / total as f64 * 100.0 };
 
+    let total_prompt_tokens: usize = results.iter().map(|r| r.prompt_tokens).sum();
     let mean_tokens = if total == 0 {
         0.0
     } else {
-        results.iter().map(|r| r.prompt_tokens as f64).sum::<f64>() / total as f64
+        total_prompt_tokens as f64 / total as f64
     };
+
+    let recall_hits = results.iter().filter(|r| r.gold_rank.is_some()).count();
+    let recall_at_k = if total == 0 {
+        0.0
+    } else {
+        recall_hits as f64 / total as f64
+    };
+    let mrr = if total == 0 {
+        0.0
+    } else {
+        results
+            .iter()
+            .map(|r| r.gold_rank.map(|rank| 1.0 / (rank as f64 + 1.0)).unwrap_or(0.0))
+            .sum::<f64>()
+            / total as f64
+    };
+
+    let mut by_category: std::collections::BTreeMap<String, CategoryStats> =
+        std::collections::BTreeMap::new();
+    for r in &results {
+        let Some(cat) = r.category.as_ref() else { continue };
+        let entry = by_category.entry(cat.clone()).or_default();
+        entry.total += 1;
+        if r.correct {
+            entry.correct += 1;
+        }
+    }
+    for stats in by_category.values_mut() {
+        stats.accuracy_pct = if stats.total == 0 {
+            0.0
+        } else {
+            stats.correct as f64 / stats.total as f64 * 100.0
+        };
+    }
 
     let retrieval_p50 = percentile_ms(&mut results.iter().map(|r| r.retrieval_us).collect::<Vec<_>>(), 50);
     let retrieval_p95 = percentile_ms(&mut results.iter().map(|r| r.retrieval_us).collect::<Vec<_>>(), 95);
@@ -573,6 +663,11 @@ fn build_report(
         correct,
         accuracy_pct,
         mean_prompt_tokens: mean_tokens,
+        total_prompt_tokens,
+        recall_at_k,
+        mrr,
+        by_category,
+        superseded_served_pct: None,
         retrieval_p50_ms: retrieval_p50,
         retrieval_p95_ms: retrieval_p95,
         end_to_end_p50_ms: e2e_p50,
@@ -604,8 +699,10 @@ mod tests {
     #[test]
     fn gold_match_is_case_insensitive_substring() {
         let hits = vec!["Caroline went to the Park on Saturday.".into()];
+        assert_eq!(gold_rank("the park", &hits), Some(0));
         assert!(gold_in_hits("the park", &hits));
         assert!(!gold_in_hits("the zoo", &hits));
+        assert_eq!(gold_rank("the zoo", &hits), None);
     }
 }
 

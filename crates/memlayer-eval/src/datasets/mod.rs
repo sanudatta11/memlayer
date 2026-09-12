@@ -19,6 +19,13 @@ pub struct EvalQuery {
     /// Optional extra context passed verbatim to the judge (e.g. conversation
     /// excerpt from LoCoMo).
     pub judge_context: Option<String>,
+    /// Benchmark-provided category label (e.g. LoCoMo single-hop / multi-hop /
+    /// temporal / open-domain / adversarial). Used for per-category reporting.
+    #[serde(default)]
+    pub category: Option<String>,
+    /// Value that must NOT be served (superseded). Staleness benchmark only.
+    #[serde(default)]
+    pub anti_answer: Option<String>,
 }
 
 /// A single memory item to be ingested before querying.

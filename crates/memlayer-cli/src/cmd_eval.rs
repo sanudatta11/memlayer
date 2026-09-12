@@ -168,6 +168,8 @@ fn smoke_queries() -> Vec<EvalQuery> {
         question: "Where did Caroline go on Saturday?".into(),
         gold_answer: "the park".into(),
         judge_context: None,
+        category: None,
+        anti_answer: None,
     }]
 }
 
