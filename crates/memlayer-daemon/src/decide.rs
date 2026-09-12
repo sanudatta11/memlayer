@@ -24,6 +24,7 @@ pub(crate) struct DecideParsed {
     should_record: bool,
 }
 
+#[allow(clippy::result_large_err)]
 pub async fn handle(svc: &MemlayerService, req: DecideRequest) -> Result<DecideResponse, Status> {
     if req.question.trim().is_empty() {
         return Err(Status::invalid_argument("question is required"));
@@ -125,6 +126,7 @@ fn decision_topic_key(question: &str) -> String {
     format!("decision/{}", &hex[..12])
 }
 
+#[allow(clippy::result_large_err)]
 fn load_conflicts(
     svc: &MemlayerService,
     project_name: &str,

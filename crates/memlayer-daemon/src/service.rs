@@ -544,6 +544,7 @@ fn finalize_context_hits(
 
 /// Parse and stamp anchors for a just-saved observation. Returns an optional
 /// warning when the directory is not a git repo (save still succeeds).
+#[allow(clippy::result_large_err)]
 async fn stamp_observation_anchors(
     project: &memlayer_storage::ProjectState,
     repo: Option<&std::path::Path>,
