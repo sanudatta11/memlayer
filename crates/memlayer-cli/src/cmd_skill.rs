@@ -186,6 +186,36 @@ pub async fn dispatch(_fmt: Formatter, args: InstallArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    match memlayer_core::config::ensure_config_toml(&home.join(".memlayer")) {
+        Ok(r) => {
+            if r.created {
+                println!(
+                    "Wrote ~/.memlayer/config.toml (search.mode={}, extract={}, conflict={}, storage={})",
+                    r.search_mode, r.extract, r.conflict, r.backend
+                );
+            } else if !r.merged_keys.is_empty() {
+                println!(
+                    "Updated ~/.memlayer/config.toml (filled: {})",
+                    r.merged_keys.join(", ")
+                );
+            } else {
+                println!("~/.memlayer/config.toml already complete");
+            }
+        }
+        Err(e) => eprintln!("  warn: could not write ~/.memlayer/config.toml: {e}"),
+    }
+    if std::process::Command::new("claude")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| !s.success())
+        .unwrap_or(true)
+    {
+        eprintln!(
+            "  warn: `claude` CLI not found on PATH; extract and the conflict judge need it"
+        );
+    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
 
     let selection = match agents::resolve_selection(&home, &cwd, args.all, &args.agents) {
