@@ -636,6 +636,7 @@ mod tests {
             deleted_at: None,
             review_after: None,
             code_anchor: None,
+            superseded_count: 0,
             superseded_ids: vec![],
         };
         let outcome = upsert_observation_from_remote(&conn, &incoming).unwrap();
@@ -677,6 +678,7 @@ mod tests {
             deleted_at: None,
             review_after: None,
             code_anchor: None,
+            superseded_count: 0,
             superseded_ids: vec![],
         };
         let outcome = upsert_observation_from_remote(&conn, &incoming).unwrap();
@@ -718,6 +720,7 @@ mod tests {
             deleted_at: None,
             review_after: None,
             code_anchor: None,
+            superseded_count: 0,
             superseded_ids: vec![],
         };
         let outcome = upsert_observation_from_remote(&conn, &incoming).unwrap();

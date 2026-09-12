@@ -385,7 +385,34 @@ fn obs_to_proto(o: Observation) -> memlayer_proto::Observation {
         review_after: o.review_after,
         project_name: None,
         code_anchor: o.code_anchor,
+        supersedes_ids: o.superseded_ids,
+        superseded_count: o.superseded_count,
     }
+}
+
+/// Batch-fill `supersedes_ids` for search/context/recent results (one query).
+fn attach_supersedes(
+    conn: &rusqlite::Connection,
+    observations: &mut [memlayer_proto::Observation],
+) {
+    let ids: Vec<i64> = observations.iter().map(|o| o.id).collect();
+    let Ok(map) = read_q::supersedes_ids_for(conn, &ids) else {
+        return;
+    };
+    for o in observations.iter_mut() {
+        if let Some(ids) = map.get(&o.id) {
+            o.supersedes_ids = ids.clone();
+        }
+    }
+}
+
+fn observations_to_proto(
+    conn: &rusqlite::Connection,
+    hits: Vec<Observation>,
+) -> Vec<memlayer_proto::Observation> {
+    let mut out: Vec<_> = hits.into_iter().map(obs_to_proto).collect();
+    attach_supersedes(conn, &mut out);
+    out
 }
 
 fn fact_to_proto(f: facts_q::Fact) -> memlayer_proto::Fact {
@@ -754,6 +781,8 @@ impl Memlayer for MemlayerService {
                                         created_at: h.created_at.clone(), updated_at: h.created_at,
                                         deleted_at: None, review_after: None, project_name: Some(h.project),
                                         code_anchor: None,
+                                        supersedes_ids: vec![],
+                                        superseded_count: 0,
                                     });
                                 }
                             }
@@ -807,6 +836,8 @@ impl Memlayer for MemlayerService {
                         review_after: None,
                         project_name: Some(h.project),
                         code_anchor: None,
+                        supersedes_ids: vec![],
+                        superseded_count: 0,
                     })
                     .collect();
                 return Ok(Response::new(SearchObservationsResponse {
@@ -854,7 +885,7 @@ impl Memlayer for MemlayerService {
             _ => hits,
         };
         Ok(Response::new(SearchObservationsResponse {
-            observations: hits.into_iter().map(obs_to_proto).collect(),
+            observations: observations_to_proto(&conn, hits),
             warning: None,
         }))
     }
@@ -902,7 +933,7 @@ impl Memlayer for MemlayerService {
         let conn = map(project.open_read_conn())?;
         let rows = map(read_q::recent(&conn, limit, r.scope.as_deref()))?;
         Ok(Response::new(RecentObservationsResponse {
-            observations: rows.into_iter().map(obs_to_proto).collect(),
+            observations: observations_to_proto(&conn, rows),
         }))
     }
 
@@ -923,7 +954,7 @@ impl Memlayer for MemlayerService {
         if let Some(anchor) = r.anchor.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
             let hits = map(read_q::search_by_anchor(&conn, anchor, limit))?;
             let snapshot = ContextSnapshot {
-                recent_observations: hits.into_iter().map(obs_to_proto).collect(),
+                recent_observations: observations_to_proto(&conn, hits),
                 active_topics: vec![],
             };
             return Ok(Response::new(ContextResponse {
@@ -951,7 +982,7 @@ impl Memlayer for MemlayerService {
             _ => {
                 let (recents, topics) = map(read_q::recent_active(&conn, limit))?;
                 let snapshot = ContextSnapshot {
-                    recent_observations: recents.into_iter().map(obs_to_proto).collect(),
+                    recent_observations: observations_to_proto(&conn, recents),
                     active_topics: topics
                         .into_iter()
                         .map(|t| TopicSummary {
@@ -968,7 +999,7 @@ impl Memlayer for MemlayerService {
             }
         };
         let snapshot = ContextSnapshot {
-            recent_observations: recents.into_iter().map(obs_to_proto).collect(),
+            recent_observations: observations_to_proto(&conn, recents),
             active_topics: vec![],
         };
         Ok(Response::new(ContextResponse {

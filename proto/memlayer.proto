@@ -42,6 +42,11 @@ message Observation {
   optional string project_name = 19;
   // Optional code anchor (e.g. "<file>::<symbol>::<line>") for code-structure linking.
   optional string code_anchor = 20;
+  // Set when this observation replaced an earlier one. Lets a client render
+  // "current value, supersedes #N" so the agent knows adjudication happened.
+  repeated int64 supersedes_ids = 21;
+  // Number of observations this one has replaced (denormalized counter).
+  int32 superseded_count = 22;
 }
 
 message Session {

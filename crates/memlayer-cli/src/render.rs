@@ -43,6 +43,8 @@ pub(crate) fn obs_to_json(o: &p::Observation) -> Value {
         "review_after": o.review_after,
         "project_name": o.project_name,
         "code_anchor": o.code_anchor,
+        "supersedes_ids": o.supersedes_ids,
+        "superseded_count": o.superseded_count,
     })
 }
 
@@ -58,6 +60,15 @@ fn write_observation_detail(o: &p::Observation, w: &mut dyn Write) -> io::Result
     }
     if let Some(a) = &o.code_anchor {
         writeln!(w, "anchor      {a}")?;
+    }
+    if !o.supersedes_ids.is_empty() {
+        let ids: Vec<String> = o.supersedes_ids.iter().map(|id| id.to_string()).collect();
+        writeln!(
+            w,
+            "current — supersedes #{} (use `memlayer obs history {}` for the chain)",
+            ids.join(", #"),
+            o.id
+        )?;
     }
     writeln!(w, "revisions   {}", o.revision_count)?;
     writeln!(w, "created_at  {}", o.created_at)?;
@@ -84,7 +95,17 @@ fn write_observation_row(o: &p::Observation, w: &mut dyn Write) -> io::Result<()
         truncate(&o.scope, 8),
         truncate(&o.title, 32),
         snippet
-    )
+    )?;
+    if !o.supersedes_ids.is_empty() {
+        let ids: Vec<String> = o.supersedes_ids.iter().map(|id| id.to_string()).collect();
+        writeln!(
+            w,
+            "         current — supersedes #{} (use `memlayer obs history {}` for the chain)",
+            ids.join(", #"),
+            o.id
+        )?;
+    }
+    Ok(())
 }
 
 fn write_table_header(w: &mut dyn Write) -> io::Result<()> {
@@ -1086,6 +1107,8 @@ mod tests {
             review_after: None,
             project_name: None,
             code_anchor: None,
+            supersedes_ids: vec![],
+            superseded_count: 0,
         }
     }
 
@@ -1328,6 +1351,8 @@ mod tests {
             review_after: None,
             project_name: None,
             code_anchor: None,
+            supersedes_ids: vec![],
+            superseded_count: 0,
         }
     }
 

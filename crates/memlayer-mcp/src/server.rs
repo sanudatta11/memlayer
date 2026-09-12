@@ -193,6 +193,8 @@ impl MemoryServer {
     /// `search.mode`); pass "bm25" to force lexical-only.
     /// The daemon auto-starts on first use, so do not call memory_health
     /// first; only call memory_health if a tool errors.
+    /// A result carrying `supersedes_ids` is the in-force value; superseded
+    /// values are intentionally withheld from search results.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn memory_search(
         &self,
@@ -280,6 +282,8 @@ impl MemoryServer {
     /// Get session context from project memory. With no query, returns the
     /// session briefing (recent + pending); with a query, returns topic-ranked
     /// context. The daemon auto-starts on first use.
+    /// A result carrying `supersedes_ids` is the in-force value; superseded
+    /// values are intentionally withheld.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn memory_context(
         &self,

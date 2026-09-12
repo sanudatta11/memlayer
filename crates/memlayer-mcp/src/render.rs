@@ -20,6 +20,8 @@ pub fn observation_hit(obs: &Observation) -> Value {
         "snippet": truncate(&obs.content, SNIPPET_CHARS),
         "created_at": obs.created_at,
         "project_name": obs.project_name,
+        "supersedes_ids": obs.supersedes_ids,
+        "superseded_count": obs.superseded_count,
     })
 }
 
@@ -34,6 +36,8 @@ pub fn observation_brief(obs: &Observation) -> Value {
         "content": truncate(&obs.content, SNIPPET_CHARS * 2),
         "created_at": obs.created_at,
         "updated_at": obs.updated_at,
+        "supersedes_ids": obs.supersedes_ids,
+        "superseded_count": obs.superseded_count,
     })
 }
 
