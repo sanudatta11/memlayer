@@ -204,16 +204,11 @@ pub async fn dispatch(_fmt: Formatter, args: InstallArgs) -> ExitCode {
         }
         Err(e) => eprintln!("  warn: could not write ~/.memlayer/config.toml: {e}"),
     }
-    if std::process::Command::new("claude")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(true)
-    {
+    if !memlayer_extract::agent_cli::llm_cli_available() {
         eprintln!(
-            "  warn: `claude` CLI not found on PATH; extract and the conflict judge need it"
+            "  warn: no agent CLI on PATH for extract/judge/rerank \
+             (looked for {}). Install your agent's CLI or set MEMLAYER_LLM_BIN.",
+            memlayer_extract::agent_cli::known_binaries().join(", ")
         );
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());

@@ -6,7 +6,14 @@ description: memlayer features and configuration overlays.
 `memlayer install` writes `~/.memlayer/config.toml` with hybrid search, the
 conflict judge, and extract enabled. Code defaults also enable
 `conflict.enabled` and `search.mode = "hybrid"`. Extract stays opt-in in
-code defaults (no Claude on unit tests) but install turns it on.
+code defaults (no LLM on unit tests) but install turns it on.
+
+Hybrid **retrieval** is local (BM25 + BGE-small + RRF). Extract, conflict,
+optional `--rerank`, resolve, and Decide call whichever agent CLI is on PATH
+(`cursor-agent`, `copilot`, `gemini`, `codex`, `claude`, …). Model knobs are
+**roles** (`fast` / `capable`; `haiku` / `sonnet` still parse). If the
+provider has no mapped id, memlayer omits `--model` and uses the agent's
+default.
 
 Disable the judge if you want heuristic supersession only:
 
@@ -31,7 +38,8 @@ Merge order (highest wins): env vars → project overlay → global → code def
 `MEMLAYER_EXTRACT_WORKERS`, `MEMLAYER_RERANK_MODEL`, `MEMLAYER_RERANK_TIMEOUT_SECS`,
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
 `MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
-`MEMLAYER_CLAUDE_MODEL` (raw `claude --model` id; tried first when Haiku/Sonnet are not installed).
+`MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`
+(legacy `MEMLAYER_CLAUDE_MODEL` is the same as `MEMLAYER_LLM_MODEL`).
 
 See the repository [`CLAUDE.md`](https://github.com/sanudatta11/memlayer/blob/main/CLAUDE.md)
 for the full knob list and architecture notes.

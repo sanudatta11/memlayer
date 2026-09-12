@@ -166,9 +166,15 @@ fn validate_key_value(key: &str, value: &str) -> Result<(), String> {
                 format!("extract.enabled must be true|false (got {value:?})")
             })?;
         }
-        "extract.model" | "rerank.model" => {
-            if !["haiku", "sonnet"].contains(&v.to_ascii_lowercase().as_str()) {
-                return Err(format!("{key} must be 'haiku' or 'sonnet' (got {value:?})"));
+        "extract.model" | "rerank.model" | "conflict.model" => {
+            if ![
+                "haiku", "sonnet", "fast", "capable", "flash", "pro", "mini", "small", "large",
+            ]
+            .contains(&v.to_ascii_lowercase().as_str())
+            {
+                return Err(format!(
+                    "{key} must be a model role: fast|capable (aliases: haiku|sonnet) (got {value:?})"
+                ));
             }
         }
         "extract.timeout_secs" | "rerank.timeout_secs" => {

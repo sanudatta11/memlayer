@@ -19,7 +19,7 @@ pub struct SearchArgs {
     pub query: String,
     /// Retrieval mode: "bm25" (default) or "hybrid" (BM25 + dense, RRF-fused).
     pub mode: Option<String>,
-    /// Optional reranker model: "haiku" or "sonnet".
+    /// Optional reranker: "fast"/"capable" (aliases "haiku"/"sonnet").
     pub rerank: Option<String>,
     /// Maximum number of results (default 10).
     pub limit: Option<i32>,
@@ -57,7 +57,7 @@ pub struct ContextArgs {
     pub query: Option<String>,
     /// Retrieval mode: "bm25" (default) or "hybrid".
     pub mode: Option<String>,
-    /// Optional reranker model: "haiku" or "sonnet".
+    /// Optional reranker: "fast"/"capable" (aliases "haiku"/"sonnet").
     pub rerank: Option<String>,
     /// Maximum number of recent observations to include (default 10).
     pub limit: Option<i32>,
@@ -156,11 +156,8 @@ mod tests {
         assert_eq!(args.mode.as_deref(), Some("hybrid"));
         assert_eq!(args.limit, Some(5));
 
-        let add: super::AddArgs = serde_json::from_str(
-            r#"{"title":"t","content":"c","type":"decision"}"#,
-        )
-        .unwrap();
+        let add: super::AddArgs =
+            serde_json::from_str(r#"{"title":"t","content":"c","type":"decision"}"#).unwrap();
         assert_eq!(add.type_, "decision");
     }
 }
-

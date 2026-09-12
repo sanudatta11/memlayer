@@ -299,7 +299,7 @@ pub struct ConflictConfig {
     /// When false the LLM judge is never called; the existing FTS5 heuristic
     /// runs unconditionally.
     pub enabled: bool,
-    /// Which Claude model to use for classification.
+    /// Which model *role* to use (`fast` / `capable`; `haiku` / `sonnet` still parse).
     pub model: ModelKind,
     /// Hard timeout per LLM call. On timeout the heuristic wins.
     pub timeout_secs: u64,
@@ -343,11 +343,11 @@ pub enum ModelKind {
 }
 
 impl ModelKind {
-    /// CLI model id used in `claude --model <id>` shell-outs.
+    /// Role passed to the agent CLI (`fast` / `capable`), not a vendor id.
     pub fn cli_model_id(&self) -> &'static str {
         match self {
-            ModelKind::Haiku => "claude-haiku-4-5",
-            ModelKind::Sonnet => "claude-sonnet-4-6",
+            ModelKind::Haiku => "fast",
+            ModelKind::Sonnet => "capable",
         }
     }
 
@@ -359,11 +359,11 @@ impl ModelKind {
     }
 }
 
-/// Parse a model string ("haiku" | "sonnet"), case-insensitive.
+/// Parse a model role. `haiku`/`sonnet` remain as aliases for `fast`/`capable`.
 fn parse_model(s: &str) -> Option<ModelKind> {
     match s.trim().to_ascii_lowercase().as_str() {
-        "haiku" => Some(ModelKind::Haiku),
-        "sonnet" => Some(ModelKind::Sonnet),
+        "haiku" | "fast" | "flash" | "mini" | "small" => Some(ModelKind::Haiku),
+        "sonnet" | "capable" | "pro" | "large" => Some(ModelKind::Sonnet),
         _ => None,
     }
 }
@@ -552,13 +552,13 @@ rerank = false
 
 [extract]
 enabled = true
-model = "haiku"
+model = "fast"
 timeout_secs = 30
 workers = 1
 
 [conflict]
 enabled = true
-model = "haiku"
+model = "fast"
 timeout_secs = 5
 
 [storage]
@@ -699,7 +699,7 @@ mod memlayer_config_tests {
             r#"
 [extract]
 enabled = true
-model = "haiku"
+model = "fast"
 timeout_secs = 30
 "#,
         )
@@ -865,5 +865,15 @@ model = "sonnet"
         assert_eq!(v["search"]["mode"].as_str(), Some("bm25"));
         assert_eq!(v["conflict"]["enabled"].as_bool(), Some(true));
         assert_eq!(v["extract"]["enabled"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn model_roles_map_to_fast_capable_not_vendor_ids() {
+        assert_eq!(parse_model("fast"), Some(ModelKind::Haiku));
+        assert_eq!(parse_model("capable"), Some(ModelKind::Sonnet));
+        assert_eq!(parse_model("flash"), Some(ModelKind::Haiku));
+        assert_eq!(parse_model("pro"), Some(ModelKind::Sonnet));
+        assert_eq!(ModelKind::Haiku.cli_model_id(), "fast");
+        assert_eq!(ModelKind::Sonnet.cli_model_id(), "capable");
     }
 }

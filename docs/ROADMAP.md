@@ -138,7 +138,7 @@ historical context for the design rationale.
 **What landed:** `BgeSmallEmbedder` async-wired into the daemon save path,
 V4 migration adds `observations_vec` (vec0 vtable) + `observation_embedding_meta`,
 `obs search --mode hybrid` and `obs context --mode hybrid` route through
-BM25 + dense + RRF, optional `--rerank haiku|sonnet` with 5s timeout +
+BM25 + dense + RRF, optional `--rerank fast|capable` with 5s timeout +
 graceful fallback, V5 migration adds atomic-fact storage + `obs facts <id>`
 verb, config-gated extract worker (Haiku/Sonnet) writes facts off the hot
 path, new `memlayer config show/get/set` CLI for managing the

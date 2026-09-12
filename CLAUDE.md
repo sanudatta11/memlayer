@@ -7,7 +7,7 @@ per-user gRPC daemon (`crates/memlayer-daemon`) on first call. The daemon owns
 one SQLite+FTS5 per-project DB (`crates/memlayer-storage`), a cross-project
 BM25 mirror (`global.sqlite`), and per-project write threads. Two async worker
 pools run off the save hot path: an embed worker (BGE-small, candle-rs) and an
-extract worker (Claude shell-out). Retrieval uses BM25 only or BM25 + dense ANN
+extract worker (detected agent CLI). Retrieval uses BM25 only or BM25 + dense ANN
 (sqlite-vec) fused via RRF (`crates/memlayer-retrieval`). The wire protocol is
 proto3 gRPC (`proto/memlayer.proto`).
 
@@ -18,7 +18,7 @@ memlayer-core              (config, paths, error)
 memlayer-proto             (tonic-generated stubs)
 memlayer-storage           (rusqlite, facts, conflict_judge trait)
 memlayer-embed             (BgeSmallEmbedder, quantize)
-memlayer-extract           (ClaudeClient, ClaudeCliExtractor, extractor)
+memlayer-extract           (agent_cli, ClaudeClient, ClaudeCliExtractor)
 memlayer-retrieval         (rrf_fuse, rrf_fuse_keyed, ClaudeReranker, HybridMode)
 memlayer-daemon            (service, server, embed_worker, extract_worker, conflict_judge impl)
 memlayer-client            (channel builders: UDS + TCP)
@@ -75,13 +75,13 @@ RUST_LOG=memlayer=debug cargo run -p memlayer-cli -- daemon start --foreground
 # ~/.memlayer/projects/<name>.config.toml (per-project overlay)
 
 [extract]
-enabled = false         # opt-in: Haiku/Sonnet fact decomposition on every save
-model = "haiku"         # "haiku" | "sonnet"
+enabled = false         # opt-in: fact decomposition on every save (uses agent CLI)
+model = "fast"          # "fast" | "capable" (aliases: haiku | sonnet)
 timeout_secs = 30
 workers = 1
 
 [rerank]
-model = "haiku"         # model used when --rerank is passed to obs search/context
+model = "fast"          # role used when --rerank is passed to obs search/context
 timeout_secs = 5
 
 [embed]
@@ -90,7 +90,7 @@ quantize = false        # store int8 BLOBs (384 B/obs) instead of float32 (1.5 K
 
 [conflict]
 enabled = false         # LLM judge for supersession (replaces FTS5 title-match heuristic)
-model = "haiku"
+model = "fast"
 timeout_secs = 5
 ```
 
@@ -98,7 +98,8 @@ timeout_secs = 5
 `MEMLAYER_EXTRACT_ENABLED`, `MEMLAYER_EXTRACT_MODEL`, `MEMLAYER_EXTRACT_TIMEOUT_SECS`,
 `MEMLAYER_EXTRACT_WORKERS`, `MEMLAYER_RERANK_MODEL`, `MEMLAYER_RERANK_TIMEOUT_SECS`,
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
-`MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`.
+`MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
+`MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`.
 
 ## Proto + gRPC surface (current RPCs)
 

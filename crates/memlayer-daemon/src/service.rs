@@ -251,7 +251,8 @@ impl MemlayerService {
     /// LLM rerank wrapper around `memlayer_retrieval::rerank::ClaudeReranker`.
     /// Hard 5s timeout (SC-5); on timeout or error, the un-reranked input
     /// list is returned with a tracing warning. `model` is the wire string
-    /// (`"haiku"` | `"sonnet"`); anything else returns the input unchanged.
+    /// (`fast`/`capable`, aliases `haiku`/`sonnet`); anything else returns
+    /// the input unchanged.
     async fn rerank_hits(
         &self,
         model: &str,
@@ -262,10 +263,12 @@ impl MemlayerService {
             return hits;
         }
         let kind = match model.trim().to_ascii_lowercase().as_str() {
-            "haiku" => memlayer_core::config::ModelKind::Haiku,
-            "sonnet" => memlayer_core::config::ModelKind::Sonnet,
+            "haiku" | "fast" | "flash" | "mini" | "small" => {
+                memlayer_core::config::ModelKind::Haiku
+            }
+            "sonnet" | "capable" | "pro" | "large" => memlayer_core::config::ModelKind::Sonnet,
             other => {
-                tracing::warn!(model = other, "unknown rerank model; returning hits as-is");
+                tracing::warn!(model = other, "unknown rerank model role; returning hits as-is");
                 return hits;
             }
         };

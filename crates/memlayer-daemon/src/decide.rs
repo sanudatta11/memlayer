@@ -60,13 +60,10 @@ pub async fn handle(svc: &MemlayerService, req: DecideRequest) -> Result<DecideR
     }
     conflicts = load_conflicts(svc, &req.project_name, &ids)?;
 
-    let cfg = memlayer_core::config::load_resolved(Some(&req.project_name));
     let prompt = build_decide_prompt(&req.question, &hits, &conflicts);
     let raw = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        svc.state
-            .claude_client
-            .ask(&prompt, cfg.conflict.model.cli_model_id()),
+        svc.state.claude_client.ask(&prompt, "capable"),
     )
     .await
     .map_err(|_| Status::unavailable("decide model timed out"))?

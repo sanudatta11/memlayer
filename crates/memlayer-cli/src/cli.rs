@@ -325,9 +325,9 @@ pub struct ObsSearchArgs {
     /// or `bm25`.
     #[arg(long, default_value = "hybrid", value_parser = ["bm25", "hybrid"])]
     pub mode: String,
-    /// Optional reranker model: `haiku` or `sonnet`. Hard 5s timeout per
-    /// SC-5; on timeout the un-reranked hybrid result is returned.
-    #[arg(long, value_parser = ["haiku", "sonnet"])]
+    /// Optional reranker: `fast`/`capable` (aliases haiku/sonnet). Timeout
+    /// then the un-reranked hybrid result is returned.
+    #[arg(long, value_parser = ["haiku", "sonnet", "fast", "capable"])]
     pub rerank: Option<String>,
 }
 
@@ -366,9 +366,9 @@ pub struct ObsContextArgs {
     /// Retrieval mode for the context window: `hybrid` (default) or `bm25`.
     #[arg(long, default_value = "hybrid", value_parser = ["bm25", "hybrid"])]
     pub mode: String,
-    /// Optional reranker model: `haiku` or `sonnet`. 5s timeout, falls
-    /// back on error.
-    #[arg(long, value_parser = ["haiku", "sonnet"])]
+    /// Optional reranker: `fast`/`capable` (aliases haiku/sonnet). Timeout
+    /// then the un-reranked result is returned.
+    #[arg(long, value_parser = ["haiku", "sonnet", "fast", "capable"])]
     pub rerank: Option<String>,
     /// Optional code anchor to filter context by code path/symbol.
     #[arg(long)]

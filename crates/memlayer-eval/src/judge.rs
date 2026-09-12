@@ -1,14 +1,14 @@
 // Generated with AI Coding Rules Hub
-//! Claude client for answer generation and LLM-as-judge scoring.
+//! LLM client for answer generation and judge scoring.
 //!
-//! Shells out to the `claude` CLI via [`memlayer_extract::claude_cli`] so
-//! eval uses the same model fallback as the daemon (configured id → other
-//! shipped id → agent default). Override with `MEMLAYER_CLAUDE_MODEL`.
+//! Shells out to the detected agent CLI via [`memlayer_extract::claude_cli`] so
+//! eval uses the same mapping as the daemon (role → provider id, else agent
+//! default). Override with `MEMLAYER_LLM_MODEL`.
 
 use anyhow::Result;
 use tracing::debug;
 
-use memlayer_extract::claude_cli::{ClaudeClient, ClaudeCliClient, SONNET_MODEL, HAIKU_MODEL};
+use memlayer_extract::claude_cli::{ClaudeCliClient, ClaudeClient, HAIKU_MODEL, SONNET_MODEL};
 
 pub struct JudgeClient {
     inner: ClaudeCliClient,
@@ -29,9 +29,7 @@ impl JudgeClient {
 
     /// Call the judge model; returns `true` if verdict is YES.
     pub async fn judge(&self, judge_prompt: &str) -> Result<bool> {
-        let prompt = format!(
-            "You are a strict judge. Reply only YES or NO.\n\n{judge_prompt}"
-        );
+        let prompt = format!("You are a strict judge. Reply only YES or NO.\n\n{judge_prompt}");
         let verdict = self.inner.ask(&prompt, HAIKU_MODEL).await?;
         let verdict = verdict.trim().to_uppercase();
         debug!(verdict = %verdict, "judge verdict");

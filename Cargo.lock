@@ -2121,6 +2121,7 @@ dependencies = [
  "memlayer-core",
  "memlayer-daemon",
  "memlayer-eval",
+ "memlayer-extract",
  "memlayer-mcp",
  "memlayer-proto",
  "memlayer-storage",
