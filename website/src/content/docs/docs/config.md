@@ -9,12 +9,11 @@ conflict judge, and extract enabled. Code defaults also enable
 code defaults (no LLM on unit tests) but install turns it on.
 
 Hybrid **retrieval** is local (BM25 + BGE-small + RRF). Extract, conflict,
-optional `--rerank`, resolve, and Decide call whichever agent CLI is on PATH
-(`cursor-agent`, `copilot`, `gemini`, `codex`, `opencode`, `claude`, …). Model knobs are
-**roles** (`fast` / `capable`; `haiku` / `sonnet` still parse). OpenCode/Kilo expand
-nicknames and 50+ Zen ids to `opencode/<id>` (GLM, Qwen, DeepSeek, Kimi, MiniMax,
-Claude, GPT, Gemini, Grok). If the provider has no mapped id, memlayer omits
-`--model` and uses the agent's default.
+optional `--rerank`, resolve, and Decide call whichever agent CLI is on PATH.
+They use **that agent's current/default model** unless you pin one
+(`MEMLAYER_LLM_MODEL=qwen`, `--rerank opencode/glm-5.3`, or a concrete Zen id).
+Roles in config (`fast` / `capable` / `haiku` / `sonnet`) mean inherit, not a
+vendor slug. Host env such as `CURSOR_MODEL` / `OPENCODE_MODEL` is used when set.
 
 Disable the judge if you want heuristic supersession only:
 

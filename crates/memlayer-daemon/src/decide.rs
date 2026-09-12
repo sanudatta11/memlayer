@@ -63,7 +63,7 @@ pub async fn handle(svc: &MemlayerService, req: DecideRequest) -> Result<DecideR
     let prompt = build_decide_prompt(&req.question, &hits, &conflicts);
     let raw = tokio::time::timeout(
         std::time::Duration::from_secs(15),
-        svc.state.claude_client.ask(&prompt, "capable"),
+        svc.state.claude_client.ask(&prompt, "auto"),
     )
     .await
     .map_err(|_| Status::unavailable("decide model timed out"))?

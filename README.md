@@ -71,9 +71,8 @@ registration for detected agents. Restart the agent afterward.
 
 **MCP tools:** `memory_search`, `memory_recent`, `memory_context`,
 `memory_add`, `memory_facts`, `memory_health`, `memory_decide` — launched as
-`memlayer mcp`. Extract / judge / rerank / Decide use the agent CLI on PATH
-(not Claude-only); override with `MEMLAYER_LLM_BIN`. OpenCode/Kilo accept
-50+ Zen models (`opencode/glm-5.3`, `qwen`, `deepseek`, `kimi`, …).
+`memlayer mcp`. Extract / judge / rerank / Decide use the invoking agent's
+current model unless you pin `MEMLAYER_LLM_MODEL` or a concrete id.
 
 | Agent | Config touched by install |
 |---|---|

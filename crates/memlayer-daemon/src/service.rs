@@ -251,8 +251,8 @@ impl MemlayerService {
     /// LLM rerank wrapper around `memlayer_retrieval::rerank::ClaudeReranker`.
     /// Hard 5s timeout (SC-5); on timeout or error, the un-reranked input
     /// list is returned with a tracing warning. `model` is the wire string
-    /// (`fast`/`capable`, aliases `haiku`/`sonnet`); anything else returns
-    /// the input unchanged.
+    /// Roles inherit the invoking agent's current model; a concrete id is
+    /// passed through to the agent CLI.
     async fn rerank_hits(
         &self,
         model: &str,
@@ -262,20 +262,14 @@ impl MemlayerService {
         if hits.len() <= 1 {
             return hits;
         }
-        let kind = match model.trim().to_ascii_lowercase().as_str() {
-            "haiku" | "fast" | "flash" | "mini" | "small" => {
-                memlayer_core::config::ModelKind::Haiku
-            }
-            "sonnet" | "capable" | "pro" | "large" => memlayer_core::config::ModelKind::Sonnet,
-            other => {
-                tracing::warn!(model = other, "unknown rerank model role; returning hits as-is");
-                return hits;
-            }
-        };
-
-        // Build candidate strings the reranker can score: title + first
-        // chunk of content. Cap at ~6KB total preview budget so the
-        // prompt stays under the model's context window.
+        let model_id = model.trim();
+        if model_id.is_empty() {
+            return hits;
+        }
+        let reranker = memlayer_retrieval::rerank::ClaudeReranker::with_model_id(
+            self.state.claude_client.clone(),
+            model_id,
+        );
         let candidates: Vec<String> = hits
             .iter()
             .map(|o| {
@@ -287,11 +281,6 @@ impl MemlayerService {
                 format!("{}\n{}", o.title, body)
             })
             .collect();
-
-        let reranker = memlayer_retrieval::rerank::ClaudeReranker::new(
-            self.state.claude_client.clone(),
-            kind,
-        );
 
         let top_k = hits.len();
         let fut = async {

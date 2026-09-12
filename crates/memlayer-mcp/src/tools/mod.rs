@@ -19,7 +19,8 @@ pub struct SearchArgs {
     pub query: String,
     /// Retrieval mode: "bm25" (default) or "hybrid" (BM25 + dense, RRF-fused).
     pub mode: Option<String>,
-    /// Optional reranker: "fast"/"capable" (aliases "haiku"/"sonnet").
+    /// Optional reranker. Omit to use the invoking agent's current model.
+    /// Pass a concrete id (e.g. `opencode/glm-5.3`) to pin one.
     pub rerank: Option<String>,
     /// Maximum number of results (default 10).
     pub limit: Option<i32>,
@@ -57,7 +58,8 @@ pub struct ContextArgs {
     pub query: Option<String>,
     /// Retrieval mode: "bm25" (default) or "hybrid".
     pub mode: Option<String>,
-    /// Optional reranker: "fast"/"capable" (aliases "haiku"/"sonnet").
+    /// Optional reranker. Omit to use the invoking agent's current model.
+    /// Pass a concrete id (e.g. `opencode/glm-5.3`) to pin one.
     pub rerank: Option<String>,
     /// Maximum number of recent observations to include (default 10).
     pub limit: Option<i32>,

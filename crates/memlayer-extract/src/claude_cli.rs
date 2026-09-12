@@ -40,21 +40,10 @@ impl Default for ClaudeCliClient {
     }
 }
 
-fn requested_model(model: &str) -> String {
-    for key in ["MEMLAYER_LLM_MODEL", "MEMLAYER_CLAUDE_MODEL"] {
-        if let Ok(env) = std::env::var(key) {
-            if !env.trim().is_empty() {
-                return env;
-            }
-        }
-    }
-    model.to_string()
-}
-
 #[async_trait]
 impl ClaudeClient for ClaudeCliClient {
     async fn ask(&self, prompt: &str, model: &str) -> Result<String> {
-        let requested = requested_model(model);
+        let requested = agent_cli::effective_requested(model);
 
         let Some(provider) = agent_cli::detect_provider() else {
             bail!(

@@ -238,20 +238,78 @@ pub fn known_binaries() -> Vec<&'static str> {
         .collect()
 }
 
+/// Role / empty request: omit `--model` and use the invoking agent's current
+/// (or CLI-configured default) model.
+pub fn is_unspecified_model(s: &str) -> bool {
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "" | "auto"
+            | "default"
+            | "agent"
+            | "current"
+            | "fast"
+            | "capable"
+            | "haiku"
+            | "sonnet"
+            | "flash"
+            | "mini"
+            | "small"
+            | "pro"
+            | "large"
+    )
+}
+
+/// Env vars an IDE/CLI may set to the model currently in use.
+const HOST_MODEL_KEYS: &[&str] = &[
+    "CURSOR_MODEL",
+    "OPENCODE_MODEL",
+    "KILO_MODEL",
+    "ANTHROPIC_MODEL",
+    "CLAUDE_MODEL",
+    "GEMINI_MODEL",
+    "COPILOT_MODEL",
+    "AGY_MODEL",
+    "QWEN_MODEL",
+    "KIMI_MODEL",
+];
+
+fn nonempty_env(keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            let t = v.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve what to send to the agent CLI.
+///
+/// Explicit `MEMLAYER_LLM_MODEL` always wins. Roles (`fast`/`haiku`/…) use
+/// the host's current model env if set, otherwise omit `--model`.
+pub fn effective_requested(caller: &str) -> String {
+    if let Some(v) = nonempty_env(&["MEMLAYER_LLM_MODEL", "MEMLAYER_CLAUDE_MODEL"]) {
+        return v;
+    }
+    if is_unspecified_model(caller) {
+        return nonempty_env(HOST_MODEL_KEYS).unwrap_or_default();
+    }
+    caller.trim().to_string()
+}
+
 /// Map a role or vendor id onto this provider. `None` means omit `--model`
-/// and use the agent's default.
+/// and use the agent's current/default model.
 pub fn map_model(provider: &Provider, requested: &str) -> Option<String> {
-    let r = requested.trim();
-    if r.is_empty() {
+    let r = effective_requested(requested);
+    if r.is_empty() || is_unspecified_model(&r) {
         return None;
     }
     if matches!(provider.id, "opencode" | "kilo") {
-        return opencode_models::resolve(requested);
+        return opencode_models::resolve(&r);
     }
     let lower = r.to_ascii_lowercase();
-    if matches!(lower.as_str(), "auto" | "default" | "agent") {
-        return None;
-    }
 
     let role = match lower.as_str() {
         "fast" | "haiku" | "flash" | "mini" | "small" => Some("fast"),
@@ -262,19 +320,16 @@ pub fn map_model(provider: &Provider, requested: &str) -> Option<String> {
                 || lower.contains("sonnet")
                 || lower.contains("opus")) =>
         {
-            if lower.contains("sonnet") || lower.contains("opus") {
-                Some("capable")
-            } else {
-                Some("fast")
-            }
+            // Explicit Claude id on another CLI: inherit that CLI's model
+            // instead of sending a Claude slug.
+            return None;
         }
         _ => None,
     };
 
     match role {
-        Some("fast") => provider.fast_model.map(str::to_string),
-        Some("capable") => provider.capable_model.map(str::to_string),
-        _ => Some(r.to_string()),
+        Some(_) => None,
+        None => Some(r),
     }
 }
 
@@ -446,11 +501,12 @@ mod tests {
             fast_model: Some("gemini-2.5-flash"),
             capable_model: Some("gemini-2.5-pro"),
         };
-        assert_eq!(map_model(&p, "fast").as_deref(), Some("gemini-2.5-flash"));
-        assert_eq!(map_model(&p, "haiku").as_deref(), Some("gemini-2.5-flash"));
-        assert_eq!(map_model(&p, "capable").as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(map_model(&p, "fast"), None);
+        assert_eq!(map_model(&p, "haiku"), None);
+        assert_eq!(map_model(&p, "capable"), None);
+        assert_eq!(map_model(&p, "claude-haiku-4-5"), None);
         assert_eq!(
-            map_model(&p, "claude-haiku-4-5").as_deref(),
+            map_model(&p, "gemini-2.5-flash").as_deref(),
             Some("gemini-2.5-flash")
         );
         assert_eq!(map_model(&p, "auto"), None);
@@ -467,6 +523,10 @@ mod tests {
         assert_eq!(map_model(&p, "fast"), None);
         assert_eq!(map_model(&p, "capable"), None);
         assert_eq!(map_model(&p, "gpt-4.1").as_deref(), Some("gpt-4.1"));
+        assert!(is_unspecified_model("fast"));
+        assert!(is_unspecified_model("haiku"));
+        assert!(!is_unspecified_model("qwen"));
+        assert!(!is_unspecified_model("opencode/glm-5.3"));
     }
 
     #[test]
@@ -501,13 +561,10 @@ mod tests {
             fast_model: Some(opencode_models::OPENCODE_FAST),
             capable_model: Some(opencode_models::OPENCODE_CAPABLE),
         };
-        assert_eq!(map_model(&p, "fast").as_deref(), Some(opencode_models::OPENCODE_FAST));
+        assert_eq!(map_model(&p, "fast"), None);
         assert_eq!(map_model(&p, "glm").as_deref(), Some("opencode/glm-5.3"));
         assert_eq!(map_model(&p, "qwen").as_deref(), Some("opencode/qwen3.7-plus"));
-        assert_eq!(
-            map_model(&p, "haiku").as_deref(),
-            Some("opencode/claude-haiku-4-5")
-        );
+        assert_eq!(map_model(&p, "haiku"), None);
         assert_eq!(
             map_model(&p, "claude-haiku-4-5").as_deref(),
             Some("opencode/claude-haiku-4-5")

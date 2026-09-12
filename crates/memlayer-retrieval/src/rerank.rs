@@ -51,22 +51,25 @@ pub trait Reranker: Send + Sync {
 /// Claude shell-out reranker selectable between Haiku and Sonnet.
 pub struct ClaudeReranker {
     claude: Arc<dyn ClaudeClient>,
-    model_id: &'static str,
+    model_id: String,
 }
 
 impl ClaudeReranker {
-    /// Build a reranker for the given model.
+    /// Build a reranker for the given model role (`fast`/`capable` inherit
+    /// the agent current model unless `MEMLAYER_LLM_MODEL` is set).
     pub fn new(claude: Arc<dyn ClaudeClient>, kind: ModelKind) -> Self {
         Self {
             claude,
-            model_id: kind.cli_model_id(),
+            model_id: kind.cli_model_id().to_string(),
         }
     }
 
-    /// Build a reranker with an explicit model id string. Used by callers
-    /// (eval) that have not migrated to [`ModelKind`].
-    pub fn with_model_id(claude: Arc<dyn ClaudeClient>, model_id: &'static str) -> Self {
-        Self { claude, model_id }
+    /// Build a reranker with an explicit model id string.
+    pub fn with_model_id(claude: Arc<dyn ClaudeClient>, model_id: impl Into<String>) -> Self {
+        Self {
+            claude,
+            model_id: model_id.into(),
+        }
     }
 }
 
@@ -78,7 +81,14 @@ impl Reranker for ClaudeReranker {
         question: &str,
         top_k: usize,
     ) -> Result<(Vec<String>, Duration)> {
-        rerank_with_model(self.claude.clone(), candidates, question, top_k, self.model_id).await
+        rerank_with_model(
+            self.claude.clone(),
+            candidates,
+            question,
+            top_k,
+            &self.model_id,
+        )
+        .await
     }
 }
 

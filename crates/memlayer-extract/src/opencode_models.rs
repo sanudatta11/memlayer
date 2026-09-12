@@ -5,7 +5,7 @@
 //! Zen ids without a prefix are expanded here so `opencode run -m` gets a
 //! real id instead of a Claude-only name.
 
-/// Role defaults: cheap Chinese OSS for `fast`, stronger GLM for `capable`.
+/// Documented defaults if a caller *does* pin a role (MCP/CLI inherit instead).
 pub const OPENCODE_FAST: &str = "opencode/glm-5.3-flash";
 pub const OPENCODE_CAPABLE: &str = "opencode/glm-5.3";
 
@@ -150,9 +150,8 @@ pub fn resolve(requested: &str) -> Option<String> {
     }
     let lower = r.to_ascii_lowercase().replace('_', "-");
     match lower.as_str() {
-        "auto" | "default" | "agent" => return None,
-        "fast" | "flash" | "mini" | "small" => return Some(OPENCODE_FAST.into()),
-        "capable" | "pro" | "large" => return Some(OPENCODE_CAPABLE.into()),
+        "auto" | "default" | "agent" | "current" | "fast" | "flash" | "mini" | "small"
+        | "capable" | "pro" | "large" | "haiku" | "sonnet" => return None,
         _ => {}
     }
 
@@ -215,7 +214,7 @@ mod tests {
             Some("opencode/deepseek-v4-pro")
         );
         assert_eq!(resolve("kimi").as_deref(), Some("opencode/kimi-k2.7-code"));
-        assert_eq!(resolve("haiku").as_deref(), Some("opencode/claude-haiku-4-5"));
+        assert_eq!(resolve("haiku"), None);
         assert_eq!(
             resolve("glm-5.3-flash").as_deref(),
             Some("opencode/glm-5.3-flash")
@@ -227,11 +226,11 @@ mod tests {
     }
 
     #[test]
-    fn roles_use_oss_defaults_not_claude_ids() {
-        assert_eq!(resolve("fast").as_deref(), Some(OPENCODE_FAST));
-        assert_eq!(resolve("capable").as_deref(), Some(OPENCODE_CAPABLE));
-        assert!(!OPENCODE_FAST.contains("claude"));
-        assert!(!OPENCODE_CAPABLE.contains("claude"));
+    fn roles_inherit_agent_current_model() {
+        assert_eq!(resolve("fast"), None);
+        assert_eq!(resolve("capable"), None);
+        assert_eq!(resolve("haiku"), None);
+        assert_eq!(resolve("sonnet"), None);
     }
 
     #[test]
