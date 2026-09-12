@@ -8,6 +8,7 @@
 //! still lack flags below will gain them in those follow-up tasks.
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -60,6 +61,8 @@ pub enum Command {
     Project(ProjectArgs),
     /// Sync state (export/import wired in Spec 3).
     Sync(SyncArgs),
+    /// Portable memlayer archive (.mem).
+    Mem(MemArgs),
     /// Daemon lifecycle.
     Daemon(DaemonArgs),
     /// Team / TCP-mode setup (CA generation + token admin).
@@ -671,6 +674,55 @@ pub struct SyncStatusArgs {
     pub project: Option<String>,
 }
 
+/// Portable memlayer archive (.mem).
+#[derive(Args, Debug)]
+pub struct MemArgs {
+    #[command(subcommand)]
+    pub verb: MemVerb,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemVerb {
+    /// Write a compressed .mem snapshot of the project.
+    /// Default is obfuscated only. Pass --seed-file or --seed-phrase to encrypt.
+    Export(MemExportArgs),
+    /// Read a .mem snapshot into the project.
+    /// Seed-encrypted files require --seed-file or --seed-phrase.
+    Import(MemImportArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct MemExportArgs {
+    /// Destination path; must end with .mem.
+    #[arg(long)]
+    pub out: PathBuf,
+    #[arg(long)]
+    pub project: Option<String>,
+    /// Encrypt the archive with this seed phrase (same phrase decrypts on import).
+    #[arg(long, conflicts_with = "seed_file")]
+    pub seed_phrase: Option<String>,
+    /// Read the seed phrase from a file (preferred; avoids `ps` leakage).
+    #[arg(long)]
+    pub seed_file: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct MemImportArgs {
+    /// Archive path; must end with .mem.
+    pub file: PathBuf,
+    #[arg(long)]
+    pub project: Option<String>,
+    /// merge (default): upsert by sync_id; replace: wipe project then insert.
+    #[arg(long, default_value = "merge")]
+    pub mode: String,
+    /// Decrypt a seed-encrypted archive (same phrase used at export).
+    #[arg(long, conflicts_with = "seed_file")]
+    pub seed_phrase: Option<String>,
+    /// Read the seed phrase from a file (preferred; avoids `ps` leakage).
+    #[arg(long)]
+    pub seed_file: Option<PathBuf>,
+}
+
 #[derive(Args, Debug)]
 pub struct DaemonArgs {
     #[command(subcommand)]
@@ -1006,5 +1058,44 @@ mod tests {
     fn hook_session_start_rejects_non_integer_limit() {
         let res = Cli::try_parse_from(["memlayer", "hook", "session-start", "--limit", "abc"]);
         assert!(res.is_err(), "non-integer limit must be rejected by clap");
+    }
+
+    #[test]
+    fn mem_export_parses() {
+        let cli = Cli::try_parse_from(["memlayer", "mem", "export", "--out", "x.mem"]).unwrap();
+        match cli.command {
+            Command::Mem(a) => match a.verb {
+                MemVerb::Export(e) => assert_eq!(e.out.as_os_str(), "x.mem"),
+                _ => panic!("expected export"),
+            },
+            _ => panic!("expected mem"),
+        }
+    }
+
+    #[test]
+    fn mem_export_seed_file_parses() {
+        let cli = Cli::try_parse_from([
+            "memlayer",
+            "mem",
+            "export",
+            "--out",
+            "x.mem",
+            "--seed-file",
+            "phrase.txt",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Mem(a) => match a.verb {
+                MemVerb::Export(e) => {
+                    assert_eq!(
+                        e.seed_file.as_deref(),
+                        Some(std::path::Path::new("phrase.txt"))
+                    );
+                    assert!(e.seed_phrase.is_none());
+                }
+                _ => panic!("expected export"),
+            },
+            _ => panic!("expected mem"),
+        }
     }
 }

@@ -18,6 +18,11 @@ memlayer eval --smoke --save-scorecard card.json
 memlayer config show
 memlayer daemon status
 memlayer logs --lines 50
+memlayer mem export --out backup.mem
+# prints a note about --seed-file / --seed-phrase
+memlayer mem export --out secret.mem --seed-file ./phrase.txt
+memlayer mem import backup.mem
+memlayer mem import secret.mem --seed-file ./phrase.txt
 ```
 
 TTY → text; pipes → JSON. Override with `--output {text,json,yaml}`.

@@ -25,6 +25,7 @@ pub mod cmd_eval;
 pub mod cmd_hook;
 pub mod cmd_logs;
 pub mod cmd_mcp;
+pub mod cmd_mem;
 pub mod cmd_obs;
 pub mod cmd_config;
 pub mod cmd_project;
