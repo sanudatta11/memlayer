@@ -86,7 +86,7 @@ fn get(a: ConfigGetArgs) -> Result<(), String> {
         format!(
             "unknown config key: {}; valid keys: extract.enabled, extract.model, \
              extract.timeout_secs, extract.workers, rerank.model, rerank.timeout_secs, \
-             embed.workers",
+             embed.workers, verify.serve_stale",
             a.key
         )
     })?;
@@ -152,6 +152,7 @@ fn lookup(cfg: &MemlayerConfig, key: &str) -> Option<String> {
         "rerank.model" => cfg.rerank.model.as_lowercase().to_string(),
         "rerank.timeout_secs" => cfg.rerank.timeout_secs.to_string(),
         "embed.workers" => cfg.embed.workers.to_string(),
+        "verify.serve_stale" => cfg.verify.serve_stale.to_string(),
         _ => return None,
     })
 }
@@ -164,6 +165,11 @@ fn validate_key_value(key: &str, value: &str) -> Result<(), String> {
         "extract.enabled" => {
             parse_bool(v).ok_or_else(|| {
                 format!("extract.enabled must be true|false (got {value:?})")
+            })?;
+        }
+        "verify.serve_stale" => {
+            parse_bool(v).ok_or_else(|| {
+                format!("verify.serve_stale must be true|false (got {value:?})")
             })?;
         }
         "extract.model" | "rerank.model" | "conflict.model" => {
@@ -193,7 +199,7 @@ fn validate_key_value(key: &str, value: &str) -> Result<(), String> {
             return Err(format!(
                 "unknown config key: {other}; valid keys: extract.enabled, extract.model, \
                  extract.timeout_secs, extract.workers, rerank.model, rerank.timeout_secs, \
-                 embed.workers",
+                 embed.workers, verify.serve_stale",
             ));
         }
     }

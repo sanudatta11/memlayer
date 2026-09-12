@@ -65,6 +65,14 @@ message VerifyAnchorsResponse {
   int32 unanchored = 5;
   // Observation ids whose verify_state changed.
   repeated int64 changed_ids = 6;
+  // Per-observation outcomes (same order as processing).
+  repeated VerifyResult results = 7;
+}
+
+message VerifyResult {
+  int64 id = 1;
+  string state = 2;
+  string title = 3;
 }
 
 message Session {
@@ -118,6 +126,9 @@ message SaveObservationRequest {
   optional string created_by = 9;
   optional string topic_key = 10;
   optional string code_anchor = 11;
+  // Optional multi-anchor list (path::symbol::line). First entry also
+  // populates code_anchor for backward-compatible search_by_anchor.
+  repeated string anchors = 12;
 }
 
 message SaveObservationResponse {
@@ -236,6 +247,9 @@ message ContextRequest {
   optional string query = 5;
   // Optional code anchor string to retrieve context tied to a specific symbol/file.
   optional string anchor = 6;
+  // When true, include stale/invalidated/unprovable observations even if
+  // verify.serve_stale is false. Unanchored observations are never filtered.
+  bool include_stale = 7;
 }
 message ContextResponse {
   ContextSnapshot snapshot = 1;

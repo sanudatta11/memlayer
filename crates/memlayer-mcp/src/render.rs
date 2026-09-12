@@ -22,6 +22,7 @@ pub fn observation_hit(obs: &Observation) -> Value {
         "project_name": obs.project_name,
         "supersedes_ids": obs.supersedes_ids,
         "superseded_count": obs.superseded_count,
+        "verify_state": obs.verify_state,
     })
 }
 
@@ -38,6 +39,7 @@ pub fn observation_brief(obs: &Observation) -> Value {
         "updated_at": obs.updated_at,
         "supersedes_ids": obs.supersedes_ids,
         "superseded_count": obs.superseded_count,
+        "verify_state": obs.verify_state,
     })
 }
 

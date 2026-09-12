@@ -259,7 +259,8 @@ impl MemoryServer {
             scope: "project".into(),
             created_by: Some(created_by),
             topic_key: None,
-            code_anchor: args.anchor,
+            code_anchor: args.anchor.clone(),
+            anchors: args.anchor.iter().cloned().collect(),
         };
         let resp = self
             .client
@@ -297,6 +298,7 @@ impl MemoryServer {
             rerank: args.rerank,
             query: args.query.filter(|q| !q.trim().is_empty()),
             anchor: None,
+            include_stale: false,
         };
         let resp = self
             .client

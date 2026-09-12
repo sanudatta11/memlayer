@@ -5,10 +5,13 @@ description: Common memlayer CLI commands for saving, searching, and managing me
 
 ```bash
 memlayer obs save --type decision --title "..." --content "..." --session "$SID"
+memlayer obs save --anchor src/auth.rs::login --title "..." --content "..."
 memlayer obs recent --limit 10
 memlayer obs search "auth"                     # hybrid (BM25 + dense + RRF)
 memlayer obs search "auth" --mode bm25         # lexical only
 memlayer obs context --query "deploy" --limit 20
+memlayer obs context --include-stale           # keep stale/invalidated claims
+memlayer verify                                # re-check code anchors vs HEAD
 memlayer obs history <id>                      # supersession chain tree
 memlayer obs relations <id>                    # graph relation edges
 memlayer obs reindex [--force]                 # queue re-embedding and quantization
@@ -28,3 +31,8 @@ memlayer mem import secret.mem --seed-file ./phrase.txt
 ```
 
 TTY → text; pipes → JSON. Override with `--output {text,json,yaml}`.
+
+Anchored observations are stamped with the current git commit and a content
+digest. After the code moves, `memlayer verify` marks them `stale` /
+`invalidated` / `unprovable`. Context withdraws those by default
+(`verify.serve_stale = false`); search still shows them flagged.

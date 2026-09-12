@@ -143,6 +143,7 @@ pub async fn dispatch_session_start(project_name: &str, limit: i32) -> ExitCode 
         mode: "hybrid".to_string(),
         rerank: None,
         anchor: None,
+        include_stale: false,
     };
     let _ = crate::cmd_obs::context(
         &mut client,

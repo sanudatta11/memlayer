@@ -45,6 +45,7 @@ pub(crate) fn obs_to_json(o: &p::Observation) -> Value {
         "code_anchor": o.code_anchor,
         "supersedes_ids": o.supersedes_ids,
         "superseded_count": o.superseded_count,
+        "verify_state": o.verify_state,
     })
 }
 
@@ -60,6 +61,9 @@ fn write_observation_detail(o: &p::Observation, w: &mut dyn Write) -> io::Result
     }
     if let Some(a) = &o.code_anchor {
         writeln!(w, "anchor      {a}")?;
+    }
+    if let Some(vs) = o.verify_state.as_deref().filter(|s| *s != "unanchored" && !s.is_empty()) {
+        writeln!(w, "verify      {vs}")?;
     }
     if !o.supersedes_ids.is_empty() {
         let ids: Vec<String> = o.supersedes_ids.iter().map(|id| id.to_string()).collect();
@@ -96,6 +100,11 @@ fn write_observation_row(o: &p::Observation, w: &mut dyn Write) -> io::Result<()
         truncate(&o.title, 32),
         snippet
     )?;
+    if let Some(vs) = o.verify_state.as_deref().filter(|s| {
+        matches!(*s, "stale" | "invalidated" | "unprovable")
+    }) {
+        writeln!(w, "         [{vs}] — withdrawn from context; run `memlayer verify`")?;
+    }
     if !o.supersedes_ids.is_empty() {
         let ids: Vec<String> = o.supersedes_ids.iter().map(|id| id.to_string()).collect();
         writeln!(

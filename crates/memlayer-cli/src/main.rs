@@ -14,7 +14,7 @@ use tracing::error;
 use memlayer_cli::cli::{Cli, Command, DaemonArgs, DaemonVerb, HookVerb, OutputFormat};
 use memlayer_cli::{
     cmd_daemon, cmd_decide, cmd_doctor, cmd_eval, cmd_hook, cmd_logs, cmd_obs, cmd_project, cmd_prompt, cmd_session,
-    cmd_skill, cmd_sync, cmd_team, cmd_tui, cmd_uninstall, cmd_version, cmd_mem,
+    cmd_skill, cmd_sync, cmd_team, cmd_tui, cmd_uninstall, cmd_version, cmd_verify, cmd_mem,
 };
 use memlayer_cli::{autospawn, exit};
 use memlayer_cli::formatter::Formatter;
@@ -140,6 +140,12 @@ async fn main() -> ExitCode {
         Command::Decide(args) => match open_client(cli.output, cli.project).await {
             Ok((mut client, detection, fmt)) => {
                 cmd_decide::dispatch(&mut client, &detection.normalized, fmt, args).await
+            }
+            Err(code) => code,
+        },
+        Command::Verify(args) => match open_client(cli.output, cli.project).await {
+            Ok((mut client, detection, fmt)) => {
+                cmd_verify::dispatch(&mut client, &detection.normalized, fmt, args).await
             }
             Err(code) => code,
         },

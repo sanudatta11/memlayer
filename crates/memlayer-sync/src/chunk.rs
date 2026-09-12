@@ -213,6 +213,7 @@ mod tests {
             code_anchor: None,
             superseded_count: 0,
             superseded_ids: vec![],
+            verify_state: "unanchored".into(),
         }
     }
 

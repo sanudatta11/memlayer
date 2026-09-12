@@ -389,8 +389,109 @@ fn obs_to_proto(o: Observation) -> memlayer_proto::Observation {
         code_anchor: o.code_anchor,
         supersedes_ids: o.superseded_ids,
         superseded_count: o.superseded_count,
-        verify_state: None,
+        verify_state: Some(o.verify_state).filter(|s| !s.is_empty()),
     }
+}
+
+fn filter_context_observations(
+    observations: &mut Vec<memlayer_proto::Observation>,
+    project_name: &str,
+    include_stale: bool,
+) {
+    let cfg = memlayer_core::config::load_resolved(Some(project_name));
+    observations.retain(|o| {
+        let state = o.verify_state.as_deref().unwrap_or("unanchored");
+        crate::context_filter::context_allows(state, cfg.verify.serve_stale, include_stale)
+    });
+}
+
+/// Parse and stamp anchors for a just-saved observation. Returns an optional
+/// warning when the directory is not a git repo (save still succeeds).
+async fn stamp_observation_anchors(
+    project: &memlayer_storage::ProjectState,
+    repo: Option<&std::path::Path>,
+    observation_id: i64,
+    raw: &[String],
+) -> std::result::Result<Option<String>, Status> {
+    use memlayer_core::git;
+    use memlayer_storage::anchor::{digest_slice, Anchor, VerifyState};
+    use memlayer_storage::write::WriteRequest;
+
+    let mut parsed: Vec<Anchor> = Vec::new();
+    for s in raw {
+        match Anchor::parse(s.trim()) {
+            Ok(a) => parsed.push(a),
+            Err(e) => tracing::warn!(anchor = %s, error = %e, "skipping invalid --anchor"),
+        }
+    }
+    if parsed.is_empty() {
+        return Ok(None);
+    }
+
+    let Some(repo) = repo.filter(|p| git::is_repo(p)) else {
+        let anchors = parsed.clone();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        map(project.write.send(WriteRequest::Custom {
+            f: Box::new(move |conn| {
+                memlayer_storage::anchor::insert_anchors(conn, observation_id, &anchors)?;
+                memlayer_storage::anchor::set_verify_state(
+                    conn,
+                    observation_id,
+                    VerifyState::Unanchored,
+                    None,
+                )?;
+                Ok(())
+            }),
+            reply: tx,
+        }))?;
+        await_write_reply(rx).await?;
+        return Ok(Some(
+            "not a git repo; anchors saved as unanchored".into(),
+        ));
+    };
+
+    let head = match git::head_sha(repo) {
+        Ok(h) => h,
+        Err(_) => {
+            return Ok(Some(
+                "could not read HEAD; anchors saved as unanchored".into(),
+            ));
+        }
+    };
+
+    for a in &mut parsed {
+        a.anchor_commit = Some(head.clone());
+        let path = a.path.replace('\\', "/");
+        if let Ok(Some(text)) = git::file_at_commit(repo, &head, &path) {
+            a.content_digest = Some(digest_slice(&text, a));
+        }
+    }
+
+    let anchors = parsed;
+    let head_for_write = head.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    map(project.write.send(WriteRequest::Custom {
+        f: Box::new(move |conn| {
+            memlayer_storage::anchor::insert_anchors(conn, observation_id, &anchors)?;
+            memlayer_storage::anchor::set_verify_state(
+                conn,
+                observation_id,
+                VerifyState::Verified,
+                Some(&head_for_write),
+            )?;
+            if let Some(first) = anchors.first() {
+                conn.execute(
+                    "UPDATE observations SET code_anchor = ?2 WHERE id = ?1",
+                    rusqlite::params![observation_id, first.to_canonical_string()],
+                )
+                .map_err(|e| memlayer_core::Error::internal(format!("code_anchor: {e}")))?;
+            }
+            Ok(())
+        }),
+        reply: tx,
+    }))?;
+    await_write_reply(rx).await?;
+    Ok(None)
 }
 
 /// Batch-fill `supersedes_ids` for search/context/recent results (one query).
@@ -531,7 +632,7 @@ impl Memlayer for MemlayerService {
             scope,
             created_by: r.created_by,
             topic_key,
-            code_anchor: r.code_anchor,
+            code_anchor: r.code_anchor.clone().or_else(|| r.anchors.first().cloned()),
             dedupe_window_secs: self.state.dedupe_window.as_secs(),
             max_content_chars: self.state.max_content_chars,
                     skip_supersede: false,
@@ -539,7 +640,53 @@ impl Memlayer for MemlayerService {
         let (tx, rx) = tokio::sync::oneshot::channel();
         map(project.write.send(WriteRequest::SaveObservation { input, reply: tx }))?;
         let obs = rx.await.map_err(|_| Status::internal("write thread crashed"))?;
-        let obs = map(obs)?;
+        let mut obs = map(obs)?;
+        let mut warnings_pending: Vec<String> = Vec::new();
+
+        // Stamp multi-anchors + digests. Never fail the save if git / stamping fails.
+        let mut anchor_strings: Vec<String> = r.anchors.clone();
+        if anchor_strings.is_empty() {
+            if let Some(c) = r.code_anchor.clone().filter(|s| !s.trim().is_empty()) {
+                anchor_strings.push(c);
+            }
+        }
+        if !anchor_strings.is_empty() {
+            let repo = self
+                .state
+                .registry
+                .get_repo_path(&r.project_name)
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    let cwd = std::env::current_dir().ok()?;
+                    if memlayer_core::git::is_repo(&cwd) {
+                        Some(cwd)
+                    } else {
+                        None
+                    }
+                });
+            match stamp_observation_anchors(
+                &project,
+                repo.as_deref(),
+                obs.id,
+                &anchor_strings,
+            )
+            .await
+            {
+                Ok(Some(w)) => warnings_pending.push(w),
+                Ok(None) => {
+                    if let Ok(conn) = project.open_read_conn() {
+                        if let Ok(fresh) = read_q::get(&conn, &ObservationKey::Id(obs.id)) {
+                            obs = fresh;
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, obs_id = obs.id, "anchor stamp failed");
+                    warnings_pending.push(format!("anchor_stamp_failed: {}", e.message()));
+                }
+            }
+        }
 
         // Mirror into the global DB so --all-projects search has a single
         // BM25-ranked view across every memlayer-tracked repo. Failure here
@@ -561,7 +708,7 @@ impl Memlayer for MemlayerService {
         // synchronous save commits — never on the critical path (SC-1).
         // Both pools `try_send`; full queue / disconnected pool drops the
         // task silently and logs.
-        let mut warnings: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = warnings_pending;
         if let Some(pool) = &self.state.embed_pool {
             match pool.try_queue(crate::embed_worker::EmbedTask {
                 project_name: r.project_name.clone(),
@@ -959,8 +1106,10 @@ impl Memlayer for MemlayerService {
 
         if let Some(anchor) = r.anchor.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
             let hits = map(read_q::search_by_anchor(&conn, anchor, limit))?;
+            let mut recent = observations_to_proto(&conn, hits);
+            filter_context_observations(&mut recent, &r.project_name, r.include_stale);
             let snapshot = ContextSnapshot {
-                recent_observations: observations_to_proto(&conn, hits),
+                recent_observations: recent,
                 active_topics: vec![],
             };
             return Ok(Response::new(ContextResponse {
@@ -987,8 +1136,10 @@ impl Memlayer for MemlayerService {
             }
             _ => {
                 let (recents, topics) = map(read_q::recent_active(&conn, limit))?;
+                let mut recent = observations_to_proto(&conn, recents);
+                filter_context_observations(&mut recent, &r.project_name, r.include_stale);
                 let snapshot = ContextSnapshot {
-                    recent_observations: observations_to_proto(&conn, recents),
+                    recent_observations: recent,
                     active_topics: topics
                         .into_iter()
                         .map(|t| TopicSummary {
@@ -1004,8 +1155,10 @@ impl Memlayer for MemlayerService {
                 }));
             }
         };
+        let mut recent = observations_to_proto(&conn, recents);
+        filter_context_observations(&mut recent, &r.project_name, r.include_stale);
         let snapshot = ContextSnapshot {
-            recent_observations: observations_to_proto(&conn, recents),
+            recent_observations: recent,
             active_topics: vec![],
         };
         Ok(Response::new(ContextResponse {
@@ -1298,14 +1451,7 @@ impl Memlayer for MemlayerService {
                 }
             });
         let Some(repo) = repo else {
-            return Ok(Response::new(VerifyAnchorsResponse {
-                verified: 0,
-                stale: 0,
-                invalidated: 0,
-                unprovable: 0,
-                unanchored: 0,
-                changed_ids: vec![],
-            }));
+            return Ok(Response::new(VerifyAnchorsResponse::default()));
         };
         let head = match memlayer_core::git::head_sha(&repo) {
             Ok(h) => h,
@@ -1328,6 +1474,19 @@ impl Memlayer for MemlayerService {
                     .collect()
             }
         };
+        let titles: std::collections::HashMap<i64, String> = {
+            let ids: Vec<i64> = pairs.iter().map(|(id, _)| *id).collect();
+            let mut map = std::collections::HashMap::new();
+            for id in ids {
+                if map.contains_key(&id) {
+                    continue;
+                }
+                if let Ok(obs) = read_q::get(&conn, &ObservationKey::Id(id)) {
+                    map.insert(id, obs.title);
+                }
+            }
+            map
+        };
         drop(conn);
 
         let verdicts = crate::verify::verify_anchors(&repo, &head, &pairs);
@@ -1345,6 +1504,11 @@ impl Memlayer for MemlayerService {
                 memlayer_storage::VerifyState::Unprovable => resp.unprovable += 1,
                 memlayer_storage::VerifyState::Unanchored => resp.unanchored += 1,
             }
+            resp.results.push(VerifyResult {
+                id: v.observation_id,
+                state: v.state.as_str().to_string(),
+                title: titles.get(&v.observation_id).cloned().unwrap_or_default(),
+            });
         }
         Ok(Response::new(resp))
     }

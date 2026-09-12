@@ -31,7 +31,7 @@ memlayer-tests             (integration tests)
 ## Key conventions
 
 - **Migrations** live in `migrations/V{N}__name.sql`, embedded at compile time
-  via `refinery::embed_migrations!`. Current head: V6 (embeddings_quantize).
+  via `refinery::embed_migrations!`. Current head: V10 (verify_state).
   Always use `IF NOT EXISTS` / `ALTER TABLE ... ADD COLUMN` for idempotency.
 - **Write thread** per project: `storage::write::spawn_write_thread`. All DB
   mutations go through `WriteRequest` variants on a `crossbeam` bounded channel.
@@ -99,6 +99,13 @@ quantize = false        # store int8 BLOBs (384 B/obs) instead of float32 (1.5 K
 enabled = false         # LLM judge for supersession (replaces FTS5 title-match heuristic)
 model = "fast"
 timeout_secs = 5
+
+[verify]
+serve_stale = false     # context withdraws stale/invalidated/unprovable; search still shows them
+
+[search]
+mode = "hybrid"         # "hybrid" | "bm25"
+rerank = false
 ```
 
 **Env overrides** (highest precedence, any session):
@@ -106,6 +113,7 @@ timeout_secs = 5
 `MEMLAYER_EXTRACT_WORKERS`, `MEMLAYER_RERANK_MODEL`, `MEMLAYER_RERANK_TIMEOUT_SECS`,
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
 `MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
+`MEMLAYER_VERIFY_SERVE_STALE`, `MEMLAYER_SEARCH_MODE`,
 `MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`.
 Roles (`fast`/`capable`) inherit the invoking agent's current model. Pin with
 `MEMLAYER_LLM_MODEL` or a concrete id (`qwen`, `opencode/glm-5.3`). Host hints:
@@ -117,8 +125,8 @@ Observation lifecycle: `SaveObservation`, `GetObservation`, `UpdateObservation`,
 `DeleteObservation`, `SearchObservations` (supports `mode` + `rerank` fields),
 `ListObservations`, `RecentObservations`.
 
-Context / retrieval: `Context` (supports `mode`, `rerank`, `query`), `Timeline`,
-`SuggestTopicKey`, `CapturePassive`.
+Context / retrieval: `Context` (supports `mode`, `rerank`, `query`, `include_stale`),
+`Timeline`, `SuggestTopicKey`, `CapturePassive`, `VerifyAnchors`.
 
 Atomic facts: `GetFacts`, `GetObservationHistory`.
 
@@ -134,7 +142,8 @@ Prompts, Projects, Sync, Team/Admin, Health, Doctor RPCs — see `proto/memlayer
 - Spec 2 (shipped): MCP server — `memlayer mcp` + seven `memory_*` tools;
   `memlayer install` registers Claude Code, Cursor, Windsurf, Antigravity,
   OpenCode, Kimi Code, ZCode, VS Code / Copilot, Codex, and peers
-- Spec 3: Code anchors + graphify bridge (`obs save --anchor file::symbol`)
+- Spec 3: Code anchors + graphify bridge (`obs save --anchor file::symbol`) —
+  verify engine + `memlayer verify` + stale withdrawal shipped; git hooks pending
 - Spec 4 (shipped): LLM supersession judge — `conflict.enabled`
 - Spec 5 (shipped): `obs history <id>` supersession chain
 - Spec 1 deferred items (shipped): int8 quantize, cross-project hybrid,

@@ -243,15 +243,13 @@ multi-hop.
 
 ### Spec 5 — `memlayer obs history` + minor polish
 
-**Status today:** `obs history` was scoped in a prior plan, only the
-skill-text portion shipped. The actual command is unimplemented.
+**Status today:** shipped (`obs history` walks `superseded_by_id`; int8
+quantize via `embed.quantize` + `memlayer reindex`).
 
-**Scope:** small CLI verb walking the `superseded_by_id` chain. ~30 LOC.
-Plus:
+**Remaining polish:**
 
 - Auto-anchor heuristic refinement (from Spec 3).
-- Quantization promotion (the `quantize` int8 module from `memlayer-embed`
-  activated in production for 10M+ scale).
+- Git-hook driven re-verify (Spec 3 follow-up).
 
 **Why last:** small, polish-tier. Nice to ship together once the big
 specs are in.

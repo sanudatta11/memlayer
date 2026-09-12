@@ -24,7 +24,7 @@ pub const ALL_PROJECTS_CAP: usize = 32;
 const SELECT_COLS: &str = "id, sync_id, session_id, type, title, content, tool_name, scope,
     created_by, topic_key, normalized_hash, revision_count, duplicate_count,
     last_seen_at, created_at, updated_at, deleted_at, review_after, code_anchor,
-    superseded_count";
+    superseded_count, verify_state";
 
 /// `GetObservation` — fetch a single row by id or sync_id.
 pub fn get(conn: &Connection, key: &ObservationKey) -> Result<Observation> {

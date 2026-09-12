@@ -124,7 +124,8 @@ async fn save(
         scope: a.scope,
         created_by: None,
         topic_key: a.topic,
-        code_anchor: a.anchor,
+        code_anchor: a.anchor.first().cloned(),
+        anchors: a.anchor,
     };
     let resp = client.save_observation(req).await?.into_inner();
     write_render(&resp, fmt)?;
@@ -356,6 +357,7 @@ pub(crate) async fn context(
             rerank: a.rerank.clone(),
             query: a.query.clone(),
             anchor: a.anchor.clone(),
+            include_stale: a.include_stale,
         };
         let resp = client.context(req).await?.into_inner();
         let recent_count = resp
@@ -435,6 +437,7 @@ pub(crate) async fn context(
         rerank: a.rerank.clone(),
         query: a.query.clone(),
         anchor: a.anchor.clone(),
+        include_stale: a.include_stale,
     };
     let resp = client.context(req).await?.into_inner();
     let recent_count = resp
@@ -553,6 +556,7 @@ async fn capture_passive(
             created_by: None,
             topic_key: None,
             code_anchor: None,
+            anchors: vec![],
         };
         let s = client.save_observation(save_req).await?.into_inner();
         if let Some(o) = s.observation {

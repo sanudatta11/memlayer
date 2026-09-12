@@ -94,12 +94,24 @@ pub enum Command {
     Eval(EvalArgs),
     /// Analyze stored memories and recommend a decision.
     Decide(DecideArgs),
+    /// Re-verify code anchors against the project's git repository.
+    Verify(VerifyArgs),
     /// Run database integrity audit and auto-repair routines.
     Doctor(DoctorArgs),
     /// Launch interactive TUI observation browser.
     Tui(TuiArgs),
     /// Print version and exit.
     Version,
+}
+
+#[derive(Args, Debug)]
+pub struct VerifyArgs {
+    /// Only verify this observation id (default: all anchored observations).
+    #[arg(long)]
+    pub id: Option<i64>,
+    /// Suppress stdout (for git hooks). Errors still set a non-zero exit.
+    #[arg(long, short = 'q')]
+    pub quiet: bool,
 }
 
 #[derive(Args, Debug)]
@@ -276,9 +288,9 @@ pub struct ObsSaveArgs {
     /// Session id this observation belongs to.
     #[arg(long)]
     pub session: Option<String>,
-    /// Optional code anchor (e.g. "src/auth.rs::validate_token::42").
-    #[arg(long)]
-    pub anchor: Option<String>,
+    /// Optional code anchor (repeatable). Example: `src/auth.rs::validate_token`.
+    #[arg(long = "anchor", action = clap::ArgAction::Append)]
+    pub anchor: Vec<String>,
 }
 
 #[derive(Args, Debug)]
@@ -377,6 +389,10 @@ pub struct ObsContextArgs {
     /// Optional code anchor to filter context by code path/symbol.
     #[arg(long)]
     pub anchor: Option<String>,
+    /// Include stale / invalidated / unprovable observations in context
+    /// (overrides `verify.serve_stale = false`).
+    #[arg(long)]
+    pub include_stale: bool,
 }
 
 #[derive(Args, Debug)]

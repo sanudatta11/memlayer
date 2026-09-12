@@ -41,6 +41,13 @@ pub struct Observation {
     /// IDs of observations superseded (soft-deleted) when this one was saved.
     #[serde(default)]
     pub superseded_ids: Vec<i64>,
+    /// Freshness vs repository (`unanchored` default).
+    #[serde(default = "default_verify_state")]
+    pub verify_state: String,
+}
+
+fn default_verify_state() -> String {
+    "unanchored".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +95,11 @@ impl Observation {
             code_anchor: row.get("code_anchor").unwrap_or(None),
             superseded_count: row.get("superseded_count").unwrap_or(0),
             superseded_ids: vec![],
+            verify_state: row
+                .get::<_, Option<String>>("verify_state")
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| "unanchored".into()),
         })
     }
 }

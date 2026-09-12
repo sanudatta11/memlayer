@@ -235,6 +235,7 @@ pub struct MemlayerConfig {
     pub embed: EmbedConfig,
     pub conflict: ConflictConfig,
     pub search: SearchConfig,
+    pub verify: VerifyConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -331,6 +332,22 @@ impl Default for SearchConfig {
             mode: "hybrid".into(),
             rerank: false,
         }
+    }
+}
+
+/// Anchor verification / stale withdrawal (code-anchored memory).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VerifyConfig {
+    /// When false (default), `context` excludes stale / invalidated /
+    /// unprovable observations. Search still returns them flagged.
+    /// Unanchored observations are never filtered.
+    pub serve_stale: bool,
+}
+
+impl Default for VerifyConfig {
+    fn default() -> Self {
+        Self { serve_stale: false }
     }
 }
 
@@ -524,6 +541,9 @@ fn apply_memlayer_env_overrides(cfg: &mut MemlayerConfig) {
         } else {
             tracing::warn!(value = %v, "ignoring MEMLAYER_SEARCH_MODE: must be hybrid or bm25");
         }
+    }
+    if let Ok(v) = std::env::var("MEMLAYER_VERIFY_SERVE_STALE") {
+        cfg.verify.serve_stale = parse_bool_env(&v);
     }
 }
 
