@@ -60,6 +60,24 @@ export default defineConfig({
 			],
 			head: [
 				{
+					tag: 'link',
+					attrs: {
+						rel: 'alternate',
+						type: 'text/plain',
+						title: 'llms.txt',
+						href: `${site}/llms.txt`,
+					},
+				},
+				{
+					tag: 'link',
+					attrs: {
+						rel: 'alternate',
+						type: 'text/plain',
+						title: 'llms-full.txt',
+						href: `${site}/llms-full.txt`,
+					},
+				},
+				{
 					tag: 'meta',
 					attrs: {
 						name: 'robots',
@@ -150,6 +168,25 @@ export default defineConfig({
 								url: site,
 								description,
 								inLanguage: 'en',
+								sameAs: [
+									'https://github.com/sanudatta11/memlayer',
+								],
+							},
+							{
+								'@type': 'SoftwareApplication',
+								name: 'memlayer',
+								description,
+								url: site,
+								applicationCategory: 'DeveloperApplication',
+								operatingSystem: 'Linux, macOS',
+								offers: {
+									'@type': 'Offer',
+									price: '0',
+									priceCurrency: 'USD',
+								},
+								sameAs: [
+									'https://github.com/sanudatta11/memlayer',
+								],
 							},
 							{
 								'@type': 'SoftwareSourceCode',
@@ -161,6 +198,35 @@ export default defineConfig({
 								license: 'https://opensource.org/licenses/MIT',
 								applicationCategory: 'DeveloperApplication',
 								operatingSystem: 'Linux, macOS',
+							},
+							{
+								'@type': 'FAQPage',
+								mainEntity: [
+									{
+										'@type': 'Question',
+										name: 'What is memlayer?',
+										acceptedAnswer: {
+											'@type': 'Answer',
+											text: 'memlayer is persistent memory for AI coding agents: local, per-project SQLite under ~/.memlayer/, with a CLI, gRPC daemon, and MCP tools. No cloud is required for core save, search, and context.',
+										},
+									},
+									{
+										'@type': 'Question',
+										name: 'Which AI coding agents work with memlayer?',
+										acceptedAnswer: {
+											'@type': 'Answer',
+											text: 'Claude Code, Cursor, Windsurf, Antigravity, OpenCode, Kimi Code, ZCode, VS Code / Copilot, Codex, Gemini CLI, Amazon Q, and any agent that can speak MCP or shell out to the memlayer CLI.',
+										},
+									},
+									{
+										'@type': 'Question',
+										name: 'Does memlayer work with local or open-source LLMs?',
+										acceptedAnswer: {
+											'@type': 'Answer',
+											text: 'Yes. Hybrid BM25 + dense search runs locally. Optional LLM steps (extract, conflict judge, Decide) use whichever agent CLI is on PATH. Pin with MEMLAYER_LLM_BIN, MEMLAYER_LLM_PROVIDER, and MEMLAYER_LLM_MODEL (for example OpenCode + qwen).',
+										},
+									},
+								],
 							},
 						],
 					}),
