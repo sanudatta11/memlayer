@@ -99,6 +99,8 @@ pub struct DaemonState {
     /// Async resolution worker for `conflicts_with` pairs. `try_queue`
     /// never blocks save.
     pub resolve_pool: Option<crate::resolve_worker::ResolveWorkerPool>,
+    /// Async anchor verification worker. `try_queue` never blocks save.
+    pub verify_pool: Option<crate::verify_worker::VerifyWorkerPool>,
 }
 
 #[derive(Clone)]
@@ -387,6 +389,7 @@ fn obs_to_proto(o: Observation) -> memlayer_proto::Observation {
         code_anchor: o.code_anchor,
         supersedes_ids: o.superseded_ids,
         superseded_count: o.superseded_count,
+        verify_state: None,
     }
 }
 
@@ -784,6 +787,7 @@ impl Memlayer for MemlayerService {
                                         code_anchor: None,
                                         supersedes_ids: vec![],
                                         superseded_count: 0,
+                                    verify_state: None,
                                     });
                                 }
                             }
@@ -839,6 +843,7 @@ impl Memlayer for MemlayerService {
                         code_anchor: None,
                         supersedes_ids: vec![],
                         superseded_count: 0,
+                    verify_state: None,
                     })
                     .collect();
                 return Ok(Response::new(SearchObservationsResponse {
@@ -1269,6 +1274,79 @@ impl Memlayer for MemlayerService {
             }
         }
         Ok(Response::new(ReindexObservationsResponse { queued, skipped, cleared }))
+    }
+
+    /// Re-verify code anchors against the project's git repo.
+    #[instrument(skip(self, req), fields(rpc = "VerifyAnchors"))]
+    async fn verify_anchors(
+        &self,
+        req: Request<VerifyAnchorsRequest>,
+    ) -> Result<Response<VerifyAnchorsResponse>, Status> {
+        let _g = self.enter_rpc();
+        map(self.check_writeable())?;
+        let r = req.into_inner();
+        let project = map(self.open_project(&r.project_name))?;
+
+        let repo = map(self.state.registry.get_repo_path(&r.project_name))?
+            .filter(|p| memlayer_core::git::is_repo(p))
+            .or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                if memlayer_core::git::is_repo(&cwd) {
+                    Some(cwd)
+                } else {
+                    None
+                }
+            });
+        let Some(repo) = repo else {
+            return Ok(Response::new(VerifyAnchorsResponse {
+                verified: 0,
+                stale: 0,
+                invalidated: 0,
+                unprovable: 0,
+                unanchored: 0,
+                changed_ids: vec![],
+            }));
+        };
+        let head = match memlayer_core::git::head_sha(&repo) {
+            Ok(h) => h,
+            Err(_) => {
+                return Ok(Response::new(VerifyAnchorsResponse::default()));
+            }
+        };
+
+        let conn = map(project.open_read_conn())?;
+        let pairs = match r.observation_id {
+            Some(id) => {
+                let anchors = map(memlayer_storage::anchor::anchors_for(&conn, id))?;
+                anchors.into_iter().map(|a| (id, a)).collect::<Vec<_>>()
+            }
+            None => {
+                let listed = map(memlayer_storage::anchor::list_anchored(&conn, 10_000))?;
+                listed
+                    .into_iter()
+                    .flat_map(|(id, anchors)| anchors.into_iter().map(move |a| (id, a)))
+                    .collect()
+            }
+        };
+        drop(conn);
+
+        let verdicts = crate::verify::verify_anchors(&repo, &head, &pairs);
+        map(crate::verify_worker::apply_verdicts_with_head(
+            &project, &verdicts, &head,
+        ))?;
+
+        let mut resp = VerifyAnchorsResponse::default();
+        for v in &verdicts {
+            resp.changed_ids.push(v.observation_id);
+            match v.state {
+                memlayer_storage::VerifyState::Verified => resp.verified += 1,
+                memlayer_storage::VerifyState::Stale => resp.stale += 1,
+                memlayer_storage::VerifyState::Invalidated => resp.invalidated += 1,
+                memlayer_storage::VerifyState::Unprovable => resp.unprovable += 1,
+                memlayer_storage::VerifyState::Unanchored => resp.unanchored += 1,
+            }
+        }
+        Ok(Response::new(resp))
     }
 
     // ---- Sessions ----

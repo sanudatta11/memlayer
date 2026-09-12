@@ -1109,6 +1109,7 @@ mod tests {
             code_anchor: None,
             supersedes_ids: vec![],
             superseded_count: 0,
+        verify_state: None,
         }
     }
 
@@ -1353,6 +1354,7 @@ mod tests {
             code_anchor: None,
             supersedes_ids: vec![],
             superseded_count: 0,
+        verify_state: None,
         }
     }
 

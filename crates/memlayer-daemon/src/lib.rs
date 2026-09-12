@@ -20,6 +20,8 @@ pub mod suggest_topic_key;
 pub mod mem_export;
 pub mod mem_import;
 pub mod resolve_worker;
+pub mod verify;
+pub mod verify_worker;
 pub mod sync_export;
 pub mod sync_status;
 pub mod tls;

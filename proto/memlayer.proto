@@ -47,6 +47,24 @@ message Observation {
   repeated int64 supersedes_ids = 21;
   // Number of observations this one has replaced (denormalized counter).
   int32 superseded_count = 22;
+  // Freshness vs repository: unanchored | verified | stale | invalidated | unprovable.
+  optional string verify_state = 23;
+}
+
+message VerifyAnchorsRequest {
+  string project_name = 1;
+  // When set, only verify this observation; otherwise all anchored rows.
+  optional int64 observation_id = 2;
+}
+
+message VerifyAnchorsResponse {
+  int32 verified = 1;
+  int32 stale = 2;
+  int32 invalidated = 3;
+  int32 unprovable = 4;
+  int32 unanchored = 5;
+  // Observation ids whose verify_state changed.
+  repeated int64 changed_ids = 6;
 }
 
 message Session {
@@ -776,6 +794,7 @@ service Memlayer {
   // Bulk background operations (Specs 1c, 1d).
   rpc ReextractObservations  (ReextractObservationsRequest)  returns (ReextractObservationsResponse);
   rpc ReindexObservations    (ReindexObservationsRequest)    returns (ReindexObservationsResponse);
+  rpc VerifyAnchors          (VerifyAnchorsRequest)          returns (VerifyAnchorsResponse);
 
   // Sessions
   rpc StartSession           (StartSessionRequest)           returns (StartSessionResponse);
