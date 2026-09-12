@@ -713,6 +713,48 @@ pub fn search_dense_multi(
     Ok(out)
 }
 
+/// Same-session neighbors of `obs_id` within ±`window` ids (inclusive of the
+/// seed). `window = 0` returns just the seed when present. Soft-deleted rows
+/// are skipped. Used by context evidence-window expansion.
+pub fn neighbors_in_session(
+    conn: &Connection,
+    obs_id: i64,
+    window: u32,
+) -> Result<Vec<Observation>> {
+    let seed_session: Option<String> = conn
+        .query_row(
+            "SELECT session_id FROM observations
+              WHERE id = ?1 AND deleted_at IS NULL",
+            params![obs_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|e| Error::internal(format!("neighbors_in_session session: {e}")))?;
+    let Some(session_id) = seed_session else {
+        return Ok(Vec::new());
+    };
+    let lo = obs_id.saturating_sub(window as i64);
+    let hi = obs_id.saturating_add(window as i64);
+    let sql = format!(
+        "SELECT {SELECT_COLS} FROM observations
+          WHERE id BETWEEN ?1 AND ?2
+            AND session_id = ?3
+            AND deleted_at IS NULL
+          ORDER BY id ASC"
+    );
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| Error::internal(format!("neighbors_in_session prepare: {e}")))?;
+    let rows = stmt
+        .query_map(params![lo, hi, session_id], Observation::from_row)
+        .map_err(|e| Error::internal(format!("neighbors_in_session query: {e}")))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| Error::internal(format!("neighbors_in_session row: {e}")))?);
+    }
+    Ok(out)
+}
+
 /// Search observations matching a code_anchor exactly or by prefix.
 pub fn search_by_anchor(
     conn: &Connection,

@@ -4,17 +4,25 @@
 //! `obs_id`; those parent ids join the fusion as a third ranked list so a
 //! fact hit can surface its source observation even when BM25/dense missed it.
 
-use crate::rrf::rrf_fuse;
+use crate::rrf::rrf_fuse_scored;
 
 /// Reciprocal-rank fusion over observation-id lists. Empty lists are skipped
 /// so a project with no facts (or no dense hits yet) degrades cleanly.
 pub fn fuse_observation_lists(lists: &[Vec<u64>], k_const: u32) -> Vec<u64> {
+    fuse_observation_lists_scored(lists, k_const)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// Scored variant of [`fuse_observation_lists`] for time-decay reweighting.
+pub fn fuse_observation_lists_scored(lists: &[Vec<u64>], k_const: u32) -> Vec<(u64, f64)> {
     let nonempty: Vec<Vec<u64>> = lists
         .iter()
         .filter(|l| !l.is_empty())
         .cloned()
         .collect();
-    rrf_fuse(&nonempty, k_const)
+    rrf_fuse_scored(&nonempty, k_const)
 }
 
 #[cfg(test)]

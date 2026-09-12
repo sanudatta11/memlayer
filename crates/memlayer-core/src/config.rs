@@ -227,7 +227,7 @@ mod tests {
 
 /// Tunables for the retrieval-promotion pipeline (embed worker, extract
 /// worker, optional reranker). Resolved at every save and at every query.
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct MemlayerConfig {
     pub extract: ExtractConfig,
@@ -317,13 +317,19 @@ impl Default for ConflictConfig {
 }
 
 /// Default retrieval mode for search/context when the caller omits `mode`.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct SearchConfig {
     /// `"hybrid"` (default) or `"bm25"`.
     pub mode: String,
-    /// When true, search/context pass the configured rerank model.
+    /// When true, search/context use the configured rerank model if the
+    /// request omits an explicit `--rerank` / wire `rerank` field.
     pub rerank: bool,
+    /// Time-decay lambda for hybrid scores: `exp(-lambda * age_days)`.
+    /// `0.0` (default) disables decay. Eval harness uses `0.005`.
+    pub decay_lambda: f64,
+    /// When > 0, `context` expands each hit with ±N same-session neighbors.
+    pub evidence_window: u32,
 }
 
 impl Default for SearchConfig {
@@ -331,6 +337,8 @@ impl Default for SearchConfig {
         Self {
             mode: "hybrid".into(),
             rerank: false,
+            decay_lambda: 0.0,
+            evidence_window: 0,
         }
     }
 }
@@ -544,6 +552,20 @@ fn apply_memlayer_env_overrides(cfg: &mut MemlayerConfig) {
     }
     if let Ok(v) = std::env::var("MEMLAYER_VERIFY_SERVE_STALE") {
         cfg.verify.serve_stale = parse_bool_env(&v);
+    }
+    if let Ok(v) = std::env::var("MEMLAYER_SEARCH_DECAY_LAMBDA") {
+        if let Ok(n) = v.parse::<f64>() {
+            cfg.search.decay_lambda = n;
+        } else {
+            tracing::warn!(value = %v, "ignoring MEMLAYER_SEARCH_DECAY_LAMBDA: not a float");
+        }
+    }
+    if let Ok(v) = std::env::var("MEMLAYER_SEARCH_EVIDENCE_WINDOW") {
+        if let Ok(n) = v.parse::<u32>() {
+            cfg.search.evidence_window = n;
+        } else {
+            tracing::warn!(value = %v, "ignoring MEMLAYER_SEARCH_EVIDENCE_WINDOW: not an integer");
+        }
     }
 }
 

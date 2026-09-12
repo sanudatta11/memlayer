@@ -37,7 +37,7 @@ pub async fn handle(svc: &MemlayerService, req: DecideRequest) -> Result<DecideR
     let conn = map(project.open_read_conn())?;
     let mode = svc.resolved_search_mode(req.mode.as_deref(), &req.project_name);
     let hits: Vec<Observation> = if mode == HybridMode::Hybrid {
-        map(svc.hybrid_search(&conn, &req.question, None, None, k))?
+        map(svc.hybrid_search(&conn, &req.question, None, None, k, &req.project_name))?
     } else {
         map(read_q::search(&conn, &req.question, None, None, k))?
     };

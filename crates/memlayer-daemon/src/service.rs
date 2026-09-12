@@ -143,6 +143,23 @@ impl MemlayerService {
         memlayer_retrieval::hybrid::HybridMode::parse_wire_or_default(wire, &cfg.search.mode)
     }
 
+    /// Wire `rerank` if set; otherwise honor `search.rerank` config (model role).
+    pub(crate) fn resolved_rerank(
+        &self,
+        wire: Option<&str>,
+        project_name: &str,
+    ) -> Option<String> {
+        if let Some(m) = wire.map(str::trim).filter(|s| !s.is_empty()) {
+            return Some(m.to_string());
+        }
+        let cfg = memlayer_core::config::load_resolved(Some(project_name));
+        if cfg.search.rerank {
+            Some(cfg.rerank.model.as_lowercase().to_string())
+        } else {
+            None
+        }
+    }
+
     /// Run hybrid retrieval: BM25 top-30 + dense top-30, RRF-fused, then
     /// re-hydrated to full Observations and trimmed to `limit`. Falls
     /// back to BM25-only when:
@@ -158,9 +175,13 @@ impl MemlayerService {
         type_filter: Option<&str>,
         scope_filter: Option<&str>,
         limit: i32,
+        project_name: &str,
     ) -> Result<Vec<Observation>> {
         const RRF_DEPTH: i32 = 30;
         const RRF_K: u32 = 60;
+
+        let cfg = memlayer_core::config::load_resolved(Some(project_name));
+        let decay_lambda = cfg.search.decay_lambda;
 
         let bm25_hits = read_q::search(conn, query, type_filter, scope_filter, RRF_DEPTH)?;
         let fact_ids = fact_parent_ids(conn, query, RRF_DEPTH as i64);
@@ -197,7 +218,12 @@ impl MemlayerService {
         };
 
         if dense_hits.is_empty() && fact_ids.is_empty() {
-            return Ok(bm25_hits.into_iter().take(limit as usize).collect());
+            let mut hits: Vec<Observation> =
+                bm25_hits.into_iter().take(limit as usize).collect();
+            if decay_lambda > 0.0 {
+                apply_time_decay(&mut hits, decay_lambda);
+            }
+            return Ok(hits);
         }
 
         // Apply the same type/scope filter to dense hits that BM25 honored.
@@ -222,7 +248,7 @@ impl MemlayerService {
         // Build id-rank lists for RRF (BM25 + dense + fact parents).
         let bm25_ids: Vec<u64> = bm25_hits.iter().map(|o| o.id as u64).collect();
         let dense_ids: Vec<u64> = dense_hits.iter().map(|o| o.id as u64).collect();
-        let fused = memlayer_retrieval::facts_fuse::fuse_observation_lists(
+        let fused = memlayer_retrieval::facts_fuse::fuse_observation_lists_scored(
             &[bm25_ids, dense_ids, fact_ids],
             RRF_K,
         );
@@ -236,18 +262,36 @@ impl MemlayerService {
             by_id.entry(o.id).or_insert(o);
         }
 
-        let merged: Vec<Observation> = fused
+        let mut scored: Vec<(Observation, f64)> = fused
             .into_iter()
-            .filter_map(|id| {
+            .filter_map(|(id, score)| {
                 let oid = id as i64;
-                if let Some(o) = by_id.remove(&oid) {
-                    return Some(o);
-                }
-                read_q::get(conn, &ObservationKey::Id(oid)).ok()
+                let o = if let Some(o) = by_id.remove(&oid) {
+                    o
+                } else {
+                    read_q::get(conn, &ObservationKey::Id(oid)).ok()?
+                };
+                Some((o, score))
             })
-            .take(limit as usize)
             .collect();
-        Ok(merged)
+
+        if decay_lambda > 0.0 {
+            let now = chrono::Utc::now();
+            for (o, score) in &mut scored {
+                let age = age_days_since(&o.created_at, now);
+                *score *= (-decay_lambda * age).exp();
+            }
+            scored.sort_by(|a, b| {
+                b.1.partial_cmp(&a.1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
+        Ok(scored
+            .into_iter()
+            .map(|(o, _)| o)
+            .take(limit as usize)
+            .collect())
     }
 
     /// LLM rerank wrapper around `memlayer_retrieval::rerank::ClaudeReranker`.
@@ -403,6 +447,82 @@ fn filter_context_observations(
         let state = o.verify_state.as_deref().unwrap_or("unanchored");
         crate::context_filter::context_allows(state, cfg.verify.serve_stale, include_stale)
     });
+}
+
+/// Age in days since `created_at` (RFC3339 or SQLite `datetime('now')` form).
+fn age_days_since(created_at: &str, now: chrono::DateTime<chrono::Utc>) -> f64 {
+    let parsed = chrono::DateTime::parse_from_rfc3339(created_at)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%d %H:%M:%S")
+                .map(|ndt| ndt.and_utc())
+        })
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(created_at, "%Y-%m-%dT%H:%M:%S")
+                .map(|ndt| ndt.and_utc())
+        });
+    match parsed {
+        Ok(dt) => {
+            let secs = (now - dt).num_seconds().max(0) as f64;
+            secs / 86_400.0
+        }
+        Err(_) => 0.0,
+    }
+}
+
+fn apply_time_decay(hits: &mut Vec<Observation>, decay_lambda: f64) {
+    if decay_lambda <= 0.0 || hits.len() < 2 {
+        return;
+    }
+    let now = chrono::Utc::now();
+    let mut scored: Vec<(Observation, f64)> = hits
+        .drain(..)
+        .enumerate()
+        .map(|(i, o)| {
+            let base = 1.0 / (1.0 + i as f64);
+            let age = age_days_since(&o.created_at, now);
+            (o, base * (-decay_lambda * age).exp())
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    *hits = scored.into_iter().map(|(o, _)| o).collect();
+}
+
+/// Expand context hits with same-session neighbors; never exceed `limit`.
+fn expand_evidence_window(
+    conn: &rusqlite::Connection,
+    hits: Vec<Observation>,
+    window: u32,
+    limit: i32,
+) -> Vec<Observation> {
+    if window == 0 {
+        return hits.into_iter().take(limit as usize).collect();
+    }
+    let limit = limit.max(1) as usize;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for seed in hits {
+        if out.len() >= limit {
+            break;
+        }
+        let neighbors = read_q::neighbors_in_session(conn, seed.id, window).unwrap_or_default();
+        // Prefer seed first, then neighbors by id order.
+        let mut batch = vec![seed];
+        for n in neighbors {
+            if n.id != batch[0].id {
+                batch.push(n);
+            }
+        }
+        for o in batch {
+            if seen.insert(o.id) {
+                out.push(o);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Parse and stamp anchors for a just-saved observation. Returns an optional
@@ -1021,7 +1141,14 @@ impl Memlayer for MemlayerService {
         let hits = if self.resolved_search_mode(r.mode.as_deref(), &r.project_name)
             == memlayer_retrieval::hybrid::HybridMode::Hybrid
         {
-            map(self.hybrid_search(&conn, &r.query, r.r#type.as_deref(), r.scope.as_deref(), limit))?
+            map(self.hybrid_search(
+                &conn,
+                &r.query,
+                r.r#type.as_deref(),
+                r.scope.as_deref(),
+                limit,
+                &r.project_name,
+            ))?
         } else {
             map(read_q::search(
                 &conn,
@@ -1031,11 +1158,10 @@ impl Memlayer for MemlayerService {
                 limit,
             ))?
         };
-        // Optional LLM rerank (SC-5). 5s hard cap; on timeout / error
-        // we fall back to the un-reranked hybrid order.
-        let hits = match r.rerank.as_deref() {
-            Some(model) if !model.is_empty() => self.rerank_hits(model, &r.query, hits).await,
-            _ => hits,
+        // Optional LLM rerank (SC-5). Wire field wins; else search.rerank config.
+        let hits = match self.resolved_rerank(r.rerank.as_deref(), &r.project_name) {
+            Some(model) => self.rerank_hits(&model, &r.query, hits).await,
+            None => hits,
         };
         Ok(Response::new(SearchObservationsResponse {
             observations: observations_to_proto(&conn, hits),
@@ -1104,8 +1230,12 @@ impl Memlayer for MemlayerService {
         let limit = if r.recent_limit <= 0 { 10 } else { r.recent_limit };
         let conn = map(project.open_read_conn())?;
 
+        let cfg = memlayer_core::config::load_resolved(Some(&r.project_name));
+        let evidence_window = cfg.search.evidence_window;
+
         if let Some(anchor) = r.anchor.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
             let hits = map(read_q::search_by_anchor(&conn, anchor, limit))?;
+            let hits = expand_evidence_window(&conn, hits, evidence_window, limit);
             let mut recent = observations_to_proto(&conn, hits);
             filter_context_observations(&mut recent, &r.project_name, r.include_stale);
             let snapshot = ContextSnapshot {
@@ -1125,17 +1255,19 @@ impl Memlayer for MemlayerService {
                 let hits = if self.resolved_search_mode(r.mode.as_deref(), &r.project_name)
                     == memlayer_retrieval::hybrid::HybridMode::Hybrid
                 {
-                    map(self.hybrid_search(&conn, q, None, None, limit))?
+                    map(self.hybrid_search(&conn, q, None, None, limit, &r.project_name))?
                 } else {
                     map(read_q::search(&conn, q, None, None, limit))?
                 };
-                match r.rerank.as_deref() {
-                    Some(model) if !model.is_empty() => self.rerank_hits(model, q, hits).await,
-                    _ => hits,
-                }
+                let hits = match self.resolved_rerank(r.rerank.as_deref(), &r.project_name) {
+                    Some(model) => self.rerank_hits(&model, q, hits).await,
+                    None => hits,
+                };
+                expand_evidence_window(&conn, hits, evidence_window, limit)
             }
             _ => {
                 let (recents, topics) = map(read_q::recent_active(&conn, limit))?;
+                let recents = expand_evidence_window(&conn, recents, evidence_window, limit);
                 let mut recent = observations_to_proto(&conn, recents);
                 filter_context_observations(&mut recent, &r.project_name, r.include_stale);
                 let snapshot = ContextSnapshot {
