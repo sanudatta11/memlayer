@@ -302,7 +302,7 @@ async fn run_extract(
     // Ensure observations exist for each project (idempotent — skips if
     // already ingested with same sync_ids).
     println!("Ingesting {} observations into storage projects...", memories.len());
-    memlayer_eval::ingest::ingest_memories(data_dir, &memories, 500).await?;
+    memlayer_eval::ingest::ingest_memories(data_dir, &memories, 500, false).await?;
 
     let facts_db_path = memlayer_eval::runner::facts_db_path_for(benchmark, data_dir);
     println!("Facts DB: {}", facts_db_path.display());
