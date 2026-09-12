@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod git;
 pub mod paths;
 pub mod project;
 pub mod time;
