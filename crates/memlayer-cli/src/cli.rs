@@ -307,10 +307,9 @@ pub struct ObsSearchArgs {
     /// Search across all projects (capped at 32 per EC-10).
     #[arg(long)]
     pub all_projects: bool,
-    /// Retrieval mode: `bm25` (default for v1.x back-compat) or `hybrid`
-    /// (BM25 + dense ANN top-30 fused via RRF). Retrieval-promotion SC-3,
-    /// SC-4.
-    #[arg(long, default_value = "bm25", value_parser = ["bm25", "hybrid"])]
+    /// Retrieval mode: `hybrid` (default; BM25 + dense ANN fused via RRF)
+    /// or `bm25`.
+    #[arg(long, default_value = "hybrid", value_parser = ["bm25", "hybrid"])]
     pub mode: String,
     /// Optional reranker model: `haiku` or `sonnet`. Hard 5s timeout per
     /// SC-5; on timeout the un-reranked hybrid result is returned.
@@ -346,12 +345,12 @@ pub struct ObsListArgs {
 pub struct ObsContextArgs {
     #[arg(long, default_value_t = 10)]
     pub limit: i32,
-    /// Optional query to focus the context window on. When set together
-    /// with `--mode hybrid`, the daemon RRF-fuses BM25 and dense matches.
+    /// Optional query to focus the context window on. When set, the daemon
+    /// retrieves for that query (default `--mode hybrid`).
     #[arg(long)]
     pub query: Option<String>,
-    /// Retrieval mode for the context window: `bm25` (default) or `hybrid`.
-    #[arg(long, default_value = "bm25", value_parser = ["bm25", "hybrid"])]
+    /// Retrieval mode for the context window: `hybrid` (default) or `bm25`.
+    #[arg(long, default_value = "hybrid", value_parser = ["bm25", "hybrid"])]
     pub mode: String,
     /// Optional reranker model: `haiku` or `sonnet`. 5s timeout, falls
     /// back on error.
@@ -910,9 +909,9 @@ mod tests {
     }
 
     #[test]
-    fn obs_search_default_mode_bm25() {
+    fn obs_search_default_mode_hybrid() {
         let a = parse_obs_search(&["the query"]);
-        assert_eq!(a.mode, "bm25", "back-compat default per SC-4");
+        assert_eq!(a.mode, "hybrid");
         assert!(a.rerank.is_none());
     }
 

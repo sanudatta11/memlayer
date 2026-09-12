@@ -133,6 +133,11 @@ impl MemlayerService {
         self.state.registry.get_or_open(name)
     }
 
+    fn resolved_search_mode(&self, wire: Option<&str>, project_name: &str) -> memlayer_retrieval::hybrid::HybridMode {
+        let cfg = memlayer_core::config::load_resolved(Some(project_name));
+        memlayer_retrieval::hybrid::HybridMode::parse_wire_or_default(wire, &cfg.search.mode)
+    }
+
     /// Run hybrid retrieval: BM25 top-30 + dense top-30, RRF-fused, then
     /// re-hydrated to full Observations and trimmed to `limit`. Falls
     /// back to BM25-only when:
@@ -615,7 +620,7 @@ impl Memlayer for MemlayerService {
         let limit = if r.limit == 0 { read_q::DEFAULT_LIMIT } else { r.limit };
         let conn = map(project.open_read_conn())?;
         if r.all_projects {
-            let mode = memlayer_retrieval::hybrid::HybridMode::parse_wire(r.mode.as_deref());
+            let mode = self.resolved_search_mode(r.mode.as_deref(), &r.project_name);
 
             if mode == memlayer_retrieval::hybrid::HybridMode::Hybrid {
                 // Hybrid cross-project: BM25 via global DB + dense fan-out to
@@ -756,7 +761,9 @@ impl Memlayer for MemlayerService {
                 warning,
             }));
         }
-        let hits = if matches!(r.mode.as_deref(), Some("hybrid")) {
+        let hits = if self.resolved_search_mode(r.mode.as_deref(), &r.project_name)
+            == memlayer_retrieval::hybrid::HybridMode::Hybrid
+        {
             map(self.hybrid_search(&conn, &r.query, r.r#type.as_deref(), r.scope.as_deref(), limit))?
         } else {
             map(read_q::search(
@@ -851,13 +858,18 @@ impl Memlayer for MemlayerService {
             }));
         }
 
-        // Spec retrieval-promotion: when caller provides --query alongside
-        // --mode hybrid, the context window is the hybrid retrieval result
-        // for that query (still bounded by `recent_limit`). Without a query
-        // we fall back to the existing recent + active-topics view.
+        // When the caller provides a query, retrieve for that query using the
+        // resolved search mode (config default hybrid). Empty query keeps the
+        // recent + active-topics briefing.
         let recents = match r.query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
-            Some(q) if matches!(r.mode.as_deref(), Some("hybrid")) => {
-                let hits = map(self.hybrid_search(&conn, q, None, None, limit))?;
+            Some(q) => {
+                let hits = if self.resolved_search_mode(r.mode.as_deref(), &r.project_name)
+                    == memlayer_retrieval::hybrid::HybridMode::Hybrid
+                {
+                    map(self.hybrid_search(&conn, q, None, None, limit))?
+                } else {
+                    map(read_q::search(&conn, q, None, None, limit))?
+                };
                 match r.rerank.as_deref() {
                     Some(model) if !model.is_empty() => self.rerank_hits(model, q, hits).await,
                     _ => hits,

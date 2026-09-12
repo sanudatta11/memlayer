@@ -17,6 +17,10 @@ use crate::render;
 use crate::scope::resolve_project;
 use crate::tools::{AddArgs, ContextArgs, FactsArgs, HealthArgs, RecentArgs, SearchArgs};
 
+fn default_search_mode() -> String {
+    memlayer_core::config::load_resolved(None).search.mode
+}
+
 /// Local stdio MCP server exposing memlayer memory operations as tools.
 #[derive(Clone)]
 pub struct MemoryServer {
@@ -185,9 +189,10 @@ async fn bridge_stdio_for_antigravity(
 
 #[tool_router(vis = "pub")]
 impl MemoryServer {
-    /// Search stored project memory. Modes: "bm25" (default) or "hybrid"
-    /// (BM25 + dense, RRF-fused). The daemon auto-starts on first use, so do
-    /// not call memory_health first; only call memory_health if a tool errors.
+    /// Search stored project memory. Default mode is hybrid (config
+    /// `search.mode`); pass "bm25" to force lexical-only.
+    /// The daemon auto-starts on first use, so do not call memory_health
+    /// first; only call memory_health if a tool errors.
     #[tool(annotations(read_only_hint = true, open_world_hint = false))]
     async fn memory_search(
         &self,
@@ -207,7 +212,7 @@ impl MemoryServer {
             scope: args.scope,
             all_projects: false,
             limit: clamp_limit(args.limit, 10),
-            mode: Some(args.mode.unwrap_or_else(|| "bm25".into())),
+            mode: Some(args.mode.unwrap_or_else(default_search_mode)),
             rerank: args.rerank,
         };
         let resp = self
@@ -283,7 +288,7 @@ impl MemoryServer {
         let req = memlayer_proto::ContextRequest {
             project_name: project,
             recent_limit: clamp_limit(args.limit, 10),
-            mode: Some(args.mode.unwrap_or_else(|| "bm25".into())),
+            mode: Some(args.mode.unwrap_or_else(default_search_mode)),
             rerank: args.rerank,
             query: args.query.filter(|q| !q.trim().is_empty()),
             anchor: None,

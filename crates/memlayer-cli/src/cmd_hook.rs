@@ -140,7 +140,7 @@ pub async fn dispatch_session_start(project_name: &str, limit: i32) -> ExitCode 
     let args = ObsContextArgs {
         limit,
         query: None,
-        mode: "bm25".to_string(),
+        mode: "hybrid".to_string(),
         rerank: None,
         anchor: None,
     };

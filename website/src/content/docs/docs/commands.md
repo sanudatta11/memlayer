@@ -6,8 +6,8 @@ description: Common memlayer CLI commands for saving, searching, and managing me
 ```bash
 memlayer obs save --type decision --title "..." --content "..." --session "$SID"
 memlayer obs recent --limit 10
-memlayer obs search "auth"                     # BM25
-memlayer obs search "auth" --mode hybrid       # + dense (BGE-small + RRF)
+memlayer obs search "auth"                     # hybrid (BM25 + dense + RRF)
+memlayer obs search "auth" --mode bm25         # lexical only
 memlayer obs context --query "deploy" --limit 20
 memlayer obs history <id>                      # supersession chain tree
 memlayer obs relations <id>                    # graph relation edges
