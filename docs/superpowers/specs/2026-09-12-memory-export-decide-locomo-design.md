@@ -365,12 +365,12 @@ quality modifiers). Two wiring bugs hide it:
 5. **Judge prompt:** include extracted facts *and* evidence-window
    observation text so the answer LLM is not starved on “who said what”.
 6. **Scorecard honesty:** persist real `accuracy_pct`, retrieval p50, and
-   whether extract/rerank ran. Compare against Mem0 published 91.6% as a
+   whether extract/rerank ran. Compare against published LoCoMo numbers as a
    **reference column only**, not a fake self-score.
 
 **Target:** measured LoCoMo overall strictly above the current BM25-only
 path. Do not hard-code a claimed percentage in docs until a full run
-exists. Stretch goal vs Mem0 New is post-measurement.
+exists. Stretch vs a full-LLM judge is post-measurement.
 
 ### 5.3 Approaches considered
 

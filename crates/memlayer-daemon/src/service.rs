@@ -96,6 +96,9 @@ pub struct DaemonState {
     /// the daemon's rerank path. Same `Arc` instance, so configuration
     /// (proxy strip, environment) is consistent across the two callers.
     pub claude_client: std::sync::Arc<dyn memlayer_extract::claude_cli::ClaudeClient>,
+    /// Async resolution worker for `conflicts_with` pairs. `try_queue`
+    /// never blocks save.
+    pub resolve_pool: Option<crate::resolve_worker::ResolveWorkerPool>,
 }
 
 #[derive(Clone)]
@@ -126,14 +129,14 @@ impl MemlayerService {
         Ok(())
     }
 
-    fn open_project(&self, name: &str) -> Result<Arc<ProjectState>> {
+    pub(crate) fn open_project(&self, name: &str) -> Result<Arc<ProjectState>> {
         if name.trim().is_empty() {
             return Err(Error::invalid("project_name is required"));
         }
         self.state.registry.get_or_open(name)
     }
 
-    fn resolved_search_mode(&self, wire: Option<&str>, project_name: &str) -> memlayer_retrieval::hybrid::HybridMode {
+    pub(crate) fn resolved_search_mode(&self, wire: Option<&str>, project_name: &str) -> memlayer_retrieval::hybrid::HybridMode {
         let cfg = memlayer_core::config::load_resolved(Some(project_name));
         memlayer_retrieval::hybrid::HybridMode::parse_wire_or_default(wire, &cfg.search.mode)
     }
@@ -146,7 +149,7 @@ impl MemlayerService {
     /// - the per-project `observations_vec` table is missing/empty.
     ///
     /// Spec: retrieval-promotion SC-3, SC-11, P8.
-    fn hybrid_search(
+    pub(crate) fn hybrid_search(
         &self,
         conn: &rusqlite::Connection,
         query: &str,
@@ -158,46 +161,40 @@ impl MemlayerService {
         const RRF_K: u32 = 60;
 
         let bm25_hits = read_q::search(conn, query, type_filter, scope_filter, RRF_DEPTH)?;
+        let fact_ids = fact_parent_ids(conn, query, RRF_DEPTH as i64);
 
         // Embed the query. If the daemon has no embedder (cold-start
         // fallback or candle init failure), or embedding errors, fall
-        // back to BM25-only.
-        let embedder = match &self.state.query_embedder {
-            Some(e) => e,
+        // back to BM25 (+ facts) only.
+        let dense_hits = match &self.state.query_embedder {
             None => {
                 tracing::info!(
-                    "hybrid requested but no query embedder loaded — using BM25 only",
+                    "hybrid requested but no query embedder loaded — using BM25 (+ facts if any)",
                 );
-                return Ok(bm25_hits.into_iter().take(limit as usize).collect());
+                Vec::new()
             }
-        };
-        let q_vec = match embedder.embed(&[query]) {
-            Ok(mut vs) => match vs.pop() {
-                Some(v) => v,
-                None => {
-                    tracing::warn!("embedder returned no vectors for query — using BM25 only");
-                    return Ok(bm25_hits.into_iter().take(limit as usize).collect());
+            Some(embedder) => match embedder.embed(&[query]) {
+                Ok(mut vs) => match vs.pop() {
+                    Some(q_vec) => match read_q::search_dense(conn, &q_vec, RRF_DEPTH as i64) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "dense search failed — using BM25 (+ facts)");
+                            Vec::new()
+                        }
+                    },
+                    None => {
+                        tracing::warn!("embedder returned no vectors for query — using BM25 (+ facts)");
+                        Vec::new()
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(error = %e, "query embed failed — using BM25 (+ facts)");
+                    Vec::new()
                 }
             },
-            Err(e) => {
-                tracing::warn!(error = %e, "query embed failed — using BM25 only");
-                return Ok(bm25_hits.into_iter().take(limit as usize).collect());
-            }
         };
 
-        let dense_hits = match read_q::search_dense(conn, &q_vec, RRF_DEPTH as i64) {
-            Ok(h) => h,
-            Err(e) => {
-                tracing::warn!(error = %e, "dense search failed — using BM25 only");
-                return Ok(bm25_hits.into_iter().take(limit as usize).collect());
-            }
-        };
-
-        if dense_hits.is_empty() {
-            // Vec table empty (no embeddings landed yet for this project).
-            tracing::info!(
-                "hybrid requested but vec table empty — using BM25 only (embed worker is catching up)",
-            );
+        if dense_hits.is_empty() && fact_ids.is_empty() {
             return Ok(bm25_hits.into_iter().take(limit as usize).collect());
         }
 
@@ -220,11 +217,11 @@ impl MemlayerService {
             })
             .collect();
 
-        // Build id-rank lists for RRF.
+        // Build id-rank lists for RRF (BM25 + dense + fact parents).
         let bm25_ids: Vec<u64> = bm25_hits.iter().map(|o| o.id as u64).collect();
         let dense_ids: Vec<u64> = dense_hits.iter().map(|o| o.id as u64).collect();
-        let fused = memlayer_retrieval::rrf::reciprocal_rank_fusion(
-            &[bm25_ids, dense_ids],
+        let fused = memlayer_retrieval::facts_fuse::fuse_observation_lists(
+            &[bm25_ids, dense_ids, fact_ids],
             RRF_K,
         );
 
@@ -239,7 +236,13 @@ impl MemlayerService {
 
         let merged: Vec<Observation> = fused
             .into_iter()
-            .filter_map(|id| by_id.remove(&(id as i64)))
+            .filter_map(|id| {
+                let oid = id as i64;
+                if let Some(o) = by_id.remove(&oid) {
+                    return Some(o);
+                }
+                read_q::get(conn, &ObservationKey::Id(oid)).ok()
+            })
             .take(limit as usize)
             .collect();
         Ok(merged)
@@ -428,6 +431,31 @@ fn prompt_to_proto(p: Prompt) -> memlayer_proto::Prompt {
     }
 }
 
+fn fact_parent_ids(conn: &rusqlite::Connection, query: &str, limit: i64) -> Vec<u64> {
+    let n: i64 = conn
+        .query_row("SELECT COUNT(*) FROM facts", [], |r| r.get(0))
+        .unwrap_or(0);
+    if n == 0 {
+        return Vec::new();
+    }
+    match facts_q::search_facts(conn, query, limit) {
+        Ok(facts) => {
+            let mut ids = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for f in facts {
+                if seen.insert(f.obs_id) {
+                    ids.push(f.obs_id as u64);
+                }
+            }
+            ids
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "facts search skipped");
+            Vec::new()
+        }
+    }
+}
+
 fn proto_cursor(c: StorageCursor) -> Result<ProtoCursor> {
     Ok(ProtoCursor { token: c.encode()? })
 }
@@ -456,6 +484,21 @@ impl Memlayer for MemlayerService {
         map(self.check_writeable())?;
         let r = req.into_inner();
         let project = map(self.open_project(&r.project_name))?;
+        let scope = if r.scope.is_empty() {
+            "project".into()
+        } else {
+            r.scope.clone()
+        };
+        let mut topic_key = r.topic_key.clone().filter(|s| !s.trim().is_empty());
+        if topic_key.is_none() {
+            if let Ok(conn) = project.open_read_conn() {
+                if let Ok(k) =
+                    crate::suggest_topic_key::suggest(&conn, &r.r#type, &r.title, &scope)
+                {
+                    topic_key = Some(k);
+                }
+            }
+        }
         let input = SaveObservationInput {
             sync_id: r.sync_id,
             session_id: r.session_id,
@@ -463,9 +506,9 @@ impl Memlayer for MemlayerService {
             title: r.title,
             content: r.content,
             tool_name: r.tool_name,
-            scope: if r.scope.is_empty() { "project".into() } else { r.scope },
+            scope,
             created_by: r.created_by,
-            topic_key: r.topic_key,
+            topic_key,
             code_anchor: r.code_anchor,
             dedupe_window_secs: self.state.dedupe_window.as_secs(),
             max_content_chars: self.state.max_content_chars,
@@ -495,26 +538,63 @@ impl Memlayer for MemlayerService {
         // synchronous save commits — never on the critical path (SC-1).
         // Both pools `try_send`; full queue / disconnected pool drops the
         // task silently and logs.
+        let mut warnings: Vec<String> = Vec::new();
         if let Some(pool) = &self.state.embed_pool {
-            pool.try_queue(crate::embed_worker::EmbedTask {
+            match pool.try_queue(crate::embed_worker::EmbedTask {
                 project_name: r.project_name.clone(),
                 obs_id: obs.id,
                 title: obs.title.clone(),
                 content: obs.content.clone(),
-            });
+            }) {
+                crate::embed_worker::QueueResult::Dropped => warnings.push("embed_dropped".into()),
+                crate::embed_worker::QueueResult::Disconnected => {
+                    warnings.push("embed_dropped".into())
+                }
+                crate::embed_worker::QueueResult::Queued => {}
+            }
         }
         // Extract is opt-in: only queue when this project's resolved
         // config has extract.enabled = true. SC-7 guarantees zero LLM
         // calls otherwise.
         if let Some(pool) = &self.state.extract_pool {
             if crate::extract_worker::resolved_model_for(&r.project_name).is_some() {
-                pool.try_queue(crate::extract_worker::ExtractTask {
+                match pool.try_queue(crate::extract_worker::ExtractTask {
                     project_name: r.project_name.clone(),
                     obs_id: obs.id,
                     title: obs.title.clone(),
                     content: obs.content.clone(),
                     session_id: Some(obs.session_id.clone()),
-                });
+                }) {
+                    crate::extract_worker::QueueResult::Dropped => {
+                        warnings.push("extract_dropped".into())
+                    }
+                    crate::extract_worker::QueueResult::Disconnected => {
+                        warnings.push("extract_dropped".into())
+                    }
+                    crate::extract_worker::QueueResult::Queued => {}
+                }
+            }
+        }
+
+        if let Some(pool) = &self.state.resolve_pool {
+            if let Ok(conn) = project.open_read_conn() {
+                if let Ok(rels) =
+                    memlayer_storage::get_relations_for_observation(&conn, obs.id)
+                {
+                    for rel in rels.into_iter().filter(|r| r.relation_type == "conflicts_with")
+                    {
+                        let old_id = if rel.source_id == obs.id {
+                            rel.target_id
+                        } else {
+                            rel.source_id
+                        };
+                        let _ = pool.try_queue(crate::resolve_worker::ResolveJob {
+                            project: r.project_name.clone(),
+                            old_id,
+                            new_id: obs.id,
+                        });
+                    }
+                }
             }
         }
 
@@ -531,6 +611,7 @@ impl Memlayer for MemlayerService {
         Ok(Response::new(SaveObservationResponse {
             observation: Some(obs_to_proto(obs)),
             similar_observations: superseded,
+            warnings,
         }))
     }
 
@@ -955,6 +1036,18 @@ impl Memlayer for MemlayerService {
         let _ = map(self.open_project(&r.project_name))?;
         let snippets = crate::capture_passive::extract_key_learnings(&r.text);
         Ok(Response::new(CapturePassiveResponse { snippets }))
+    }
+
+    #[instrument(skip(self, req), fields(rpc = "Decide"))]
+    async fn decide(
+        &self,
+        req: Request<DecideRequest>,
+    ) -> Result<Response<DecideResponse>, Status> {
+        let _g = self.enter_rpc();
+        map(self.check_writeable())?;
+        let inner = req.into_inner();
+        let resp = crate::decide::handle(self, inner).await?;
+        Ok(Response::new(resp))
     }
 
     /// `obs facts <id>` — return atomic facts attached to an observation.

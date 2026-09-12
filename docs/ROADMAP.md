@@ -19,11 +19,11 @@ cross-project global mirror DB), the platform looks like this:
 | Supersession | Synchronous BM25 | V3 — top BM25 hit in same `type+scope` is soft-deleted on save. |
 | Audit log | Production | `~/.memlayer/queries.log`, JSONL, fail-silent, opt-in full mode. |
 | Agent integration | 4 hooks + skill | SessionStart, Stop, PreToolUse[Grep], PreToolUse[Read]. |
-| MCP server | **Shipped** | `memlayer mcp` + six `memory_*` tools; `memlayer install` registers Claude Code, Cursor, Windsurf, Antigravity, OpenCode, Kimi Code, ZCode, VS Code, Copilot CLI, Gemini CLI, Codex, Amazon Q, `.agents`. |
+| MCP server | **Shipped** | `memlayer mcp` + seven `memory_*` tools; `memlayer install` registers Claude Code, Cursor, Windsurf, Antigravity, OpenCode, Kimi Code, ZCode, VS Code, Copilot CLI, Gemini CLI, Codex, Amazon Q, `.agents`. |
 | CI Scorecard & Eval | **Shipped** | `memlayer eval [--smoke] [--save-scorecard <file>]` and `.github/workflows/eval.yml`. |
 | Code Anchors | **Shipped** | V7 `code_anchor` schema, CLI `--anchor` & Graphify call-graph bridge. |
 | TUI & Doctor | **Shipped** | `memlayer tui` observation browser and `memlayer doctor [--repair]` auto-repair. |
-| LLM judge | **Shipped** | Engram-style relation classifier (`observation_relations`). |
+| LLM judge | **Shipped** | Relation classifier (`observation_relations`). |
 
 The agent-side surface is sound. The *retrieval substrate* is where the
 gap to the published research benchmarks lives.
@@ -227,7 +227,7 @@ co-installed, vs. ~2-3× memlayer-alone today.
 **Status today:** scoped in prior plan as "Part C — Judge upgrade
 (DEFERRED)". Not implemented.
 
-**Scope:** Engram-style locked-vocabulary classifier
+**Scope:** locked-vocabulary relation classifier
 (`conflicts_with | supersedes | scoped | related | compatible | not_conflict`),
 new `observation_relations` table, opt-in `memlayer obs judge` verb. New
 table is a strict superset of the current `superseded_by_id` FK — that

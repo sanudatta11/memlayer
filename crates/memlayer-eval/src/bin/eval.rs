@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use memlayer_eval::{
-    config::{RetrievalConfig, RetrievalMode},
+    config::{default_profile, RetrievalMode},
     datasets::{beam::BeamScale, locomo, longmemeval},
     runner::{BenchmarkKind, RunConfig},
 };
@@ -52,9 +52,10 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         skip_ingest: bool,
 
-        /// Retrieval strategy.
-        #[arg(long, value_enum, default_value_t = RetrievalMode::Bm25)]
-        mode: RetrievalMode,
+        /// Retrieval strategy. Omit to use the benchmark profile
+        /// (LoCoMo / LongMemEval: hybrid-rerank; BEAM: hybrid).
+        #[arg(long, value_enum)]
+        mode: Option<RetrievalMode>,
 
         /// Evidence window (±N raw observations around each hit).
         #[arg(long, default_value_t = 2)]
@@ -156,13 +157,13 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(out.parent().unwrap_or(std::path::Path::new("."))).ok();
             let (memories, queries) = load_dataset(benchmark, &data_dir, limit.unwrap_or(usize::MAX))?;
 
-            let retrieval = RetrievalConfig {
-                mode,
-                k,
-                evidence_window,
-                rerank: matches!(mode, RetrievalMode::HybridRerank),
-                decay_lambda: memlayer_eval::scoring::DEFAULT_DECAY_LAMBDA,
-            };
+            let mut retrieval = default_profile(benchmark);
+            if let Some(mode) = mode {
+                retrieval.mode = mode;
+                retrieval.rerank = matches!(mode, RetrievalMode::HybridRerank);
+            }
+            retrieval.k = k;
+            retrieval.evidence_window = evidence_window;
 
             // Auto-derive trace file path from --out: foo.md -> foo.trace.jsonl.
             // Captures full per-query trace (hits, prompts, LLM I/O, verdicts).
@@ -184,6 +185,7 @@ async fn main() -> Result<()> {
                 retrieval,
                 trace_path,
                 shards,
+                lexical_judge: false,
             };
 
             let report = memlayer_eval::runner::run(&cfg, memories, queries).await?;
@@ -416,30 +418,18 @@ fn summarize_reports(reports_dir: &PathBuf, out: &PathBuf) -> Result<()> {
 
     let mut md = String::from(
         "# memlayer Benchmark Summary\n\n\
-         | Benchmark | Accuracy | Tokens | Ret p50 | E2E p50 | Mem0 Old | Mem0 New |\n\
-         |---|---|---|---|---|---|---|\n"
+         | Benchmark | Accuracy | Tokens | Ret p50 | E2E p50 |\n\
+         |---|---|---|---|---|\n"
     );
-    let mem0 = [
-        ("locomo",      "71.4%", "91.6%"),
-        ("longmemeval", "67.8%", "94.8%"),
-        ("beam-1m",     "—",     "64.1%"),
-        ("beam-10m",    "—",     "48.6%"),
-    ];
 
     for r in &rows {
-        let key = r.benchmark.to_lowercase().replace("benchmarkkind::", "");
-        let (old, new) = mem0.iter()
-            .find(|(k, _, _)| key.contains(k))
-            .map(|(_, o, n)| (*o, *n))
-            .unwrap_or(("—", "—"));
         md.push_str(&format!(
-            "| {} | {:.1}% ({}/{}) | {:.0} | {:.2}ms | {:.2}ms | {} | {} |\n",
+            "| {} | {:.1}% ({}/{}) | {:.0} | {:.2}ms | {:.2}ms |\n",
             r.benchmark,
             r.accuracy_pct, r.correct, r.total_queries,
             r.mean_prompt_tokens,
             r.retrieval_p50_ms,
             r.end_to_end_p50_ms,
-            old, new,
         ));
     }
 

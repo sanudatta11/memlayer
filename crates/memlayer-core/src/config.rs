@@ -291,7 +291,8 @@ impl Default for EmbedConfig {
 }
 
 /// Config for the LLM-based conflict / supersession classifier (Spec 4).
-/// Off by default — the existing BM25-title-match heuristic is the fallback.
+/// On by default; disable with `memlayer config set conflict.enabled false`.
+/// If the judge errors, the FTS5 title-match heuristic still runs.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ConflictConfig {
@@ -307,7 +308,7 @@ pub struct ConflictConfig {
 impl Default for ConflictConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             model: ModelKind::Haiku,
             timeout_secs: 5,
         }
@@ -829,6 +830,12 @@ model = "sonnet"
         let cfg = load_resolved(None);
         assert_eq!(cfg.search.mode, "hybrid");
         std::env::remove_var("MEMLAYER_DATA_DIR");
+    }
+
+    #[test]
+    fn conflict_config_default_is_enabled() {
+        let c = MemlayerConfig::default();
+        assert!(c.conflict.enabled);
     }
 
     #[test]

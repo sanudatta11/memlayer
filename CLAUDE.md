@@ -120,7 +120,7 @@ Prompts, Projects, Sync, Team/Admin, Health, Doctor RPCs — see `proto/memlayer
 
 ## Pending roadmap (see `docs/ROADMAP.md`)
 
-- Spec 2 (shipped): MCP server — `memlayer mcp` + six `memory_*` tools;
+- Spec 2 (shipped): MCP server — `memlayer mcp` + seven `memory_*` tools;
   `memlayer install` registers Claude Code, Cursor, Windsurf, Antigravity,
   OpenCode, Kimi Code, ZCode, VS Code / Copilot, Codex, and peers
 - Spec 3: Code anchors + graphify bridge (`obs save --anchor file::symbol`)

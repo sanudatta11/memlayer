@@ -20,6 +20,7 @@ pub mod audit;
 pub mod autospawn;
 pub mod cli;
 pub mod cmd_daemon;
+pub mod cmd_decide;
 pub mod cmd_doctor;
 pub mod cmd_eval;
 pub mod cmd_hook;

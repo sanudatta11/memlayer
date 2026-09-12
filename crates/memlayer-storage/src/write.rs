@@ -988,7 +988,7 @@ fn should_supersede(
     // project name from the normalized DB path; storage doesn't know it, but
     // the write thread was spawned with it as `project_id`. Rather than
     // threading the name here we just call load_resolved(None) — that gives
-    // the global config, which is sufficient for the default-off guard.
+    // the global config, which is sufficient for the default-on judge.
     let cfg = memlayer_core::config::load_resolved(None);
     if !cfg.conflict.enabled {
         return true; // feature disabled: heuristic

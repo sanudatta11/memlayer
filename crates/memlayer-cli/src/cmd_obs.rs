@@ -158,6 +158,9 @@ async fn save(
             eprintln!("  ↳ Superseded observation #{} (soft-deleted)", old.id);
         }
     }
+    for w in &resp.warnings {
+        eprintln!("  ↳ warning: {w}");
+    }
     Ok(())
 }
 

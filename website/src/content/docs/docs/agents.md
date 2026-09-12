@@ -22,6 +22,7 @@ Launched as `memlayer mcp` (stdio; do not run it by hand except for debugging):
 - `memory_add`
 - `memory_facts`
 - `memory_health`
+- `memory_decide` — recommend a decision; auto-runs the resolution judge on open conflicts
 
 ## Config files touched by install
 
@@ -39,4 +40,5 @@ Launched as `memlayer mcp` (stdio; do not run it by hand except for debugging):
 ```markdown
 Before a substantive task, run: memlayer obs context --query "<task>" --limit 20
 After a decision or correction, run: memlayer obs save --type decision --title "..." --content "..." --session "$SESSION_ID"
+When notes conflict, run: memlayer decide "<question>"
 ```

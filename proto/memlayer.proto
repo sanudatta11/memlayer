@@ -101,6 +101,8 @@ message SaveObservationResponse {
   Observation observation = 1;
   // Hash-window collisions found during save, in case the agent wants to surface them.
   repeated Observation similar_observations = 2;
+  // Non-fatal save-path notes, e.g. "embed_dropped" / "extract_dropped".
+  repeated string warnings = 3;
 }
 
 message GetObservationRequest {
@@ -704,6 +706,41 @@ message GetObservationRelationsResponse {
 }
 
 // ---
+// Decide (resolution over retrieved memories)
+// ---
+
+message DecideRequest {
+  string project_name = 1;
+  string question = 2;
+  int32 limit = 3;             // retrieval k, default 12, max 30
+  optional string mode = 4;    // bm25 | hybrid (default hybrid)
+}
+
+message DecideEvidence {
+  int64 observation_id = 1;
+  string title = 2;
+  string content = 3;
+  string role = 4;             // "supports" | "opposes" | "context"
+}
+
+message DecideConflict {
+  int64 a_id = 1;
+  int64 b_id = 2;
+  string relation = 3;
+  string status = 4;           // "open" | "resolved"
+}
+
+message DecideResponse {
+  string recommendation = 1;
+  string rationale = 2;
+  float confidence = 3;        // 0..1
+  repeated DecideEvidence evidence = 4;
+  repeated DecideConflict conflicts = 5;
+  optional int64 resolution_observation_id = 6;  // if a resolution row was written
+  bool wrote_resolution = 7;
+}
+
+// ---
 // Service
 // ---
 
@@ -723,6 +760,7 @@ service Memlayer {
   rpc Timeline               (TimelineRequest)               returns (TimelineResponse);
   rpc SuggestTopicKey        (SuggestTopicKeyRequest)        returns (SuggestTopicKeyResponse);
   rpc CapturePassive         (CapturePassiveRequest)         returns (CapturePassiveResponse);
+  rpc Decide                 (DecideRequest)                 returns (DecideResponse);
 
   // Atomic facts (retrieval-promotion spec).
   rpc GetFacts               (GetFactsRequest)               returns (GetFactsResponse);

@@ -19,12 +19,12 @@ use std::time::{Duration, Instant};
 use anyhow::Result;
 
 use memlayer_core::config::ModelKind;
-use memlayer_extract::claude_cli::ClaudeClient;
+use memlayer_extract::claude_cli::{ClaudeClient, HAIKU_MODEL};
 
 /// Default reranker model id for the legacy `rerank()` entry point. Newer
 /// callers (the daemon's `service::rerank`) pass a [`ModelKind`] explicitly
 /// via [`ClaudeReranker::new`].
-const DEFAULT_RERANK_MODEL: &str = "claude-4.5-haiku";
+const DEFAULT_RERANK_MODEL: &str = HAIKU_MODEL;
 
 /// Below this many parsed indices we treat the call as garbage and pass
 /// the original RRF order through unchanged. Five is a heuristic — most

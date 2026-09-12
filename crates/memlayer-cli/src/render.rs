@@ -127,6 +127,10 @@ impl Render for p::SaveObservationResponse {
                 write_observation_row(o, w)?;
             }
         }
+        if !self.warnings.is_empty() {
+            writeln!(w)?;
+            writeln!(w, "warnings: {}", self.warnings.join(", "))?;
+        }
         Ok(())
     }
 
@@ -138,6 +142,63 @@ impl Render for p::SaveObservationResponse {
                 .iter()
                 .map(obs_to_json)
                 .collect::<Vec<_>>(),
+            "warnings": self.warnings,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DecideResponse
+// ---------------------------------------------------------------------------
+
+impl Render for p::DecideResponse {
+    fn render_text(&self, w: &mut dyn Write) -> io::Result<()> {
+        writeln!(w, "recommendation: {}", self.recommendation)?;
+        writeln!(w, "confidence: {:.2}", self.confidence)?;
+        writeln!(w, "rationale: {}", self.rationale)?;
+        if !self.evidence.is_empty() {
+            writeln!(w, "evidence:")?;
+            for e in &self.evidence {
+                writeln!(w, "  - [{}] #{} {}", e.role, e.observation_id, e.title)?;
+            }
+        }
+        if !self.conflicts.is_empty() {
+            writeln!(w, "conflicts:")?;
+            for c in &self.conflicts {
+                writeln!(
+                    w,
+                    "  - #{} ~ #{} ({})",
+                    c.a_id, c.b_id, c.status
+                )?;
+            }
+        }
+        if self.wrote_resolution {
+            if let Some(id) = self.resolution_observation_id {
+                writeln!(w, "recorded resolution observation #{id}")?;
+            }
+        }
+        Ok(())
+    }
+
+    fn to_json_value(&self) -> Value {
+        json!({
+            "recommendation": self.recommendation,
+            "rationale": self.rationale,
+            "confidence": self.confidence,
+            "evidence": self.evidence.iter().map(|e| json!({
+                "observation_id": e.observation_id,
+                "title": e.title,
+                "content": e.content,
+                "role": e.role,
+            })).collect::<Vec<_>>(),
+            "conflicts": self.conflicts.iter().map(|c| json!({
+                "a_id": c.a_id,
+                "b_id": c.b_id,
+                "relation": c.relation,
+                "status": c.status,
+            })).collect::<Vec<_>>(),
+            "resolution_observation_id": self.resolution_observation_id,
+            "wrote_resolution": self.wrote_resolution,
         })
     }
 }

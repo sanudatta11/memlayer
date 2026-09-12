@@ -1,4 +1,4 @@
-//! Typed argument structs for the six `memory_*` MCP tools.
+//! Typed argument structs for the seven `memory_*` MCP tools.
 //!
 //! Each derives `serde::Deserialize` (for decoding tool-call arguments) and
 //! `schemars::JsonSchema` (so rmcp can advertise a JSON-Schema to the agent).
@@ -92,27 +92,39 @@ pub struct HealthArgs {
     pub project: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[schemars(crate = "rmcp::schemars")]
+pub struct DecideArgs {
+    /// Decision question to answer from stored memories.
+    pub question: String,
+    /// Maximum memories to retrieve (default 12).
+    pub limit: Option<i32>,
+    /// Project to read; defaults to the cwd project.
+    pub project: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::server::MemoryServer;
 
-    const EXPECTED: [&str; 6] = [
+    const EXPECTED: [&str; 7] = [
         "memory_search",
         "memory_add",
         "memory_context",
         "memory_facts",
         "memory_recent",
         "memory_health",
+        "memory_decide",
     ];
 
     #[test]
-    fn registry_lists_exactly_six_tools() {
+    fn registry_lists_exactly_seven_tools() {
         let names: Vec<String> = MemoryServer::tool_router()
             .list_all()
             .into_iter()
             .map(|t| t.name.to_string())
             .collect();
-        assert_eq!(names.len(), 6, "got {names:?}");
+        assert_eq!(names.len(), 7, "got {names:?}");
         for want in EXPECTED {
             assert!(names.iter().any(|n| n == want), "missing tool {want}");
         }

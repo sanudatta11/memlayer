@@ -92,6 +92,8 @@ pub enum Command {
     Mcp,
     /// Run accuracy and latency retrieval evaluation benchmark (LoCoMo, LongMemEval, BEAM).
     Eval(EvalArgs),
+    /// Analyze stored memories and recommend a decision.
+    Decide(DecideArgs),
     /// Run database integrity audit and auto-repair routines.
     Doctor(DoctorArgs),
     /// Launch interactive TUI observation browser.
@@ -131,6 +133,18 @@ pub struct EvalArgs {
     /// Save JSON benchmark scorecard to specified file path.
     #[arg(long)]
     pub save_scorecard: Option<std::path::PathBuf>,
+}
+
+#[derive(Args, Debug)]
+pub struct DecideArgs {
+    /// Question to decide from stored memories.
+    pub question: String,
+    /// Retrieval k (default 12, max 30).
+    #[arg(long, default_value_t = 12)]
+    pub limit: i32,
+    /// Retrieval mode: bm25 or hybrid. Omit to use config `search.mode`.
+    #[arg(long)]
+    pub mode: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -490,7 +504,7 @@ pub enum SessionVerb {
     /// Save a structured summary onto an existing session.
     Summary(SessionSummaryArgs),
     /// Generate a rolled-up session summary from observations and persist
-    /// it as a project-scoped note (Engram-style auto-rollup).
+    /// it as a project-scoped note (session-rollup markdown).
     Summarize(SessionSummarizeArgs),
     /// List recent sessions, paginated.
     List(SessionListArgs),
@@ -1095,6 +1109,25 @@ mod tests {
                 _ => panic!("expected export"),
             },
             _ => panic!("expected mem"),
+        }
+    }
+
+    #[test]
+    fn decide_parses_question() {
+        let cli = Cli::try_parse_from([
+            "memlayer",
+            "decide",
+            "Should we keep SQLite?",
+            "--limit",
+            "8",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Decide(a) => {
+                assert_eq!(a.question, "Should we keep SQLite?");
+                assert_eq!(a.limit, 8);
+            }
+            _ => panic!("expected decide"),
         }
     }
 }

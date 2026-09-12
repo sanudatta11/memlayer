@@ -89,9 +89,9 @@ async fn summary(
     Ok(())
 }
 
-/// Engram-style session rollup. Two modes:
+/// Session-rollup markdown. Two modes:
 /// - default (--auto): list observations by session_id, group by topic_key
-///   (or title fallback), pick latest per group, render Engram-shaped markdown.
+///   (or title fallback), pick latest per group, render session-rollup markdown.
 /// - --content -: read agent-supplied prose from stdin and use it verbatim.
 ///
 /// Both paths save as a single observation with topic_key="session-summary/<id>"
@@ -184,8 +184,8 @@ async fn summarize(
 }
 
 /// Group observations by topic_key (fallback: lowercase-stripped title), pick
-/// the latest non-deleted per group, partition by `type`, and render an
-/// Engram-shaped markdown body.
+/// the latest non-deleted per group, partition by `type`, and render a
+/// session-rollup markdown body.
 fn render_rollup(session_id: &str, obs: &[p::Observation]) -> String {
     use std::collections::BTreeMap;
 

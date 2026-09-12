@@ -65,6 +65,11 @@ pub struct RunConfig {
     /// — extract routes by `ShardRouter::shard_for(obs_id)`, retrieval
     /// fans out per-shard then merges via `merge_shard_results`.
     pub shards: usize,
+    /// When true, skip answer/judge LLM calls. `model_answer` is the
+    /// concatenated retrieval hits; `correct` is whether `gold_answer`
+    /// appears in those hits (case-insensitive). Used by `memlayer eval
+    /// --smoke` so CI needs no Claude CLI.
+    pub lexical_judge: bool,
 }
 
 /// Per-query result.
@@ -155,12 +160,16 @@ pub async fn run(
     }
 
     // --- Evaluate ---
-    let judge = JudgeClient::new().context("create judge client")?;
+    let judge = if cfg.lexical_judge {
+        None
+    } else {
+        Some(JudgeClient::new().context("create judge client")?)
+    };
 
     // Reuse the same shell-out client used by extraction so rerank shares
     // the proxy-strip + timeout machinery. Built once and reused per query.
     let rerank_claude: Option<std::sync::Arc<dyn memlayer_extract::claude_cli::ClaudeClient>> =
-        if cfg.retrieval.rerank {
+        if cfg.retrieval.rerank && !cfg.lexical_judge {
             Some(std::sync::Arc::new(
                 memlayer_extract::claude_cli::ClaudeCliClient::new(),
             ))
@@ -174,6 +183,19 @@ pub async fn run(
     };
 
     info!(count = queries_to_run.len(), k = cfg.k, "running queries");
+
+    if matches!(
+        cfg.retrieval.mode,
+        RetrievalMode::Hybrid | RetrievalMode::HybridRerank
+    ) {
+        let facts_path = facts_db_path_for(cfg.benchmark, &cfg.data_dir);
+        if !facts_path.exists() {
+            info!(
+                path = %facts_path.display(),
+                "facts.db missing; using observation-level hybrid (no extract)"
+            );
+        }
+    }
 
     // Lazily initialise the hybrid retrieval stack only when --mode demands it.
     // Loading BGE-small + opening the cache is expensive; bm25 mode skips it.
@@ -224,6 +246,7 @@ pub async fn run(
 
         // Determine project name for this query (inferred from id prefix).
         let project = infer_project(cfg.benchmark, &q.id);
+        let evidence_window = evidence_window_for_question(cfg.retrieval.evidence_window, &q.question);
 
         // Retrieve — branch on mode. HybridRerank uses Hybrid for now;
         // the rerank stage lands in spec-task-21 (P3).
@@ -252,7 +275,7 @@ pub async fn run(
                         &project,
                         &q.question,
                         retrieve_k,
-                        cfg.retrieval.evidence_window,
+                        evidence_window,
                         embedder.clone(),
                         cache.clone(),
                         cfg.retrieval.decay_lambda,
@@ -340,28 +363,38 @@ pub async fn run(
         // Build answer prompt and count tokens.
         let (system, user_msg, prompt_tokens) = build_answer_prompt(&hits, &q.question);
 
-        // Answer LLM call.
-        let model_answer = match judge.answer(&system, &user_msg).await {
-            Ok(a) => a,
-            Err(e) => {
-                warn!(query_id = %q.id, error = %e, "answer LLM failed, skipping query");
-                continue;
-            }
-        };
-
-        // Judge call.
-        let judge_prompt = build_judge_prompt(
-            &q.question,
-            &q.gold_answer,
-            &model_answer,
-            q.judge_context.as_deref(),
-        );
-        let correct = match judge.judge(&judge_prompt).await {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(query_id = %q.id, error = %e, "judge LLM failed, marking incorrect");
-                false
-            }
+        let (model_answer, judge_prompt, correct) = if cfg.lexical_judge {
+            let joined = hits.join("\n");
+            let model_answer = if joined.is_empty() {
+                String::new()
+            } else {
+                joined.clone()
+            };
+            let correct = gold_in_hits(&q.gold_answer, &hits);
+            (model_answer, String::new(), correct)
+        } else {
+            let judge = judge.as_ref().expect("JudgeClient when lexical_judge is false");
+            let model_answer = match judge.answer(&system, &user_msg).await {
+                Ok(a) => a,
+                Err(e) => {
+                    warn!(query_id = %q.id, error = %e, "answer LLM failed, skipping query");
+                    continue;
+                }
+            };
+            let judge_prompt = build_judge_prompt(
+                &q.question,
+                &q.gold_answer,
+                &model_answer,
+                q.judge_context.as_deref(),
+            );
+            let correct = match judge.judge(&judge_prompt).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(query_id = %q.id, error = %e, "judge LLM failed, marking incorrect");
+                    false
+                }
+            };
+            (model_answer, judge_prompt, correct)
         };
 
         let end_to_end_us = t_start.elapsed().as_micros() as u64;
@@ -402,7 +435,7 @@ pub async fn run(
                     RetrievalMode::HybridRerank => "hybrid-rerank",
                 },
                 "k": cfg.k,
-                "evidence_window": cfg.retrieval.evidence_window,
+                "evidence_window": evidence_window,
                 "rerank_enabled": cfg.retrieval.rerank,
                 "retrieval_us": retrieval_us,
                 "rerank_us": rerank_us,
@@ -454,6 +487,24 @@ pub async fn run(
     info!(md = %cfg.output_path.display(), json = %json_path.display(), "report written");
 
     Ok(report)
+}
+
+/// Widen the evidence window for temporal questions (eval-only).
+pub fn evidence_window_for_question(base: u8, question: &str) -> u8 {
+    let q = question.to_ascii_lowercase();
+    if q.contains("when") || q.contains("before") || q.contains("after") || q.contains("date") {
+        base.max(4)
+    } else {
+        base
+    }
+}
+
+fn gold_in_hits(gold: &str, hits: &[String]) -> bool {
+    let g = gold.trim().to_ascii_lowercase();
+    if g.is_empty() {
+        return false;
+    }
+    hits.iter().any(|h| h.to_ascii_lowercase().contains(&g))
 }
 
 fn infer_project(kind: BenchmarkKind, query_id: &str) -> String {
@@ -538,3 +589,23 @@ fn percentile_ms(values: &mut [u64], p: usize) -> f64 {
     let idx = ((p as f64 / 100.0) * (values.len() - 1) as f64).round() as usize;
     values[idx.min(values.len() - 1)] as f64 / 1000.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporal_questions_widen_evidence_window() {
+        assert_eq!(evidence_window_for_question(2, "When did Caroline go?"), 4);
+        assert_eq!(evidence_window_for_question(2, "What is her job?"), 2);
+        assert_eq!(evidence_window_for_question(5, "the date of the trip"), 5);
+    }
+
+    #[test]
+    fn gold_match_is_case_insensitive_substring() {
+        let hits = vec!["Caroline went to the Park on Saturday.".into()];
+        assert!(gold_in_hits("the park", &hits));
+        assert!(!gold_in_hits("the zoo", &hits));
+    }
+}
+

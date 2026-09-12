@@ -1,6 +1,6 @@
 //! The MCP server struct and its tool registry.
 //!
-//! `MemoryServer` hosts the six `memory_*` tools via rmcp's `#[tool_router]`.
+//! `MemoryServer` hosts the seven `memory_*` tools via rmcp's `#[tool_router]`.
 //! Each tool maps onto an existing daemon gRPC RPC through [`LazyClient`].
 
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use crate::client::LazyClient;
 use crate::error::McpError;
 use crate::render;
 use crate::scope::resolve_project;
-use crate::tools::{AddArgs, ContextArgs, FactsArgs, HealthArgs, RecentArgs, SearchArgs};
+use crate::tools::{AddArgs, ContextArgs, DecideArgs, FactsArgs, HealthArgs, RecentArgs, SearchArgs};
 
 fn default_search_mode() -> String {
     memlayer_core::config::load_resolved(None).search.mode
@@ -273,6 +273,7 @@ impl MemoryServer {
             "title": obs.map(|o| o.title.clone()),
             "created_by": obs.and_then(|o| o.created_by.clone()),
             "superseded": resp.similar_observations.iter().map(|o| o.id).collect::<Vec<_>>(),
+            "warnings": resp.warnings,
         })))
     }
 
@@ -363,6 +364,53 @@ impl MemoryServer {
             .await?;
         Ok(CallToolResult::structured(json!({
             "observations": resp.observations.iter().map(render::observation_hit).collect::<Vec<_>>(),
+        })))
+    }
+
+    /// Recommend a decision from stored memories; auto-runs the resolution
+    /// judge on open conflicts. Use after memory_search when the user must
+    /// choose between conflicting notes. The daemon auto-starts on first use.
+    #[tool(annotations(read_only_hint = false, destructive_hint = false, open_world_hint = false))]
+    async fn memory_decide(
+        &self,
+        Parameters(args): Parameters<DecideArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let project = resolve_project(&self.base_project, args.project.as_deref())?;
+        if args.question.trim().is_empty() {
+            return Err(McpError::BadArgs {
+                message: "question must not be empty".into(),
+            }
+            .into());
+        }
+        let req = memlayer_proto::DecideRequest {
+            project_name: project,
+            question: args.question,
+            limit: clamp_limit(args.limit, 12),
+            mode: None,
+        };
+        let resp = self
+            .client
+            .call(|mut c| {
+                let req = req.clone();
+                async move { c.decide(req).await.map(|r| r.into_inner()) }
+            })
+            .await?;
+        Ok(CallToolResult::structured(json!({
+            "recommendation": resp.recommendation,
+            "rationale": resp.rationale,
+            "confidence": resp.confidence,
+            "evidence": resp.evidence.iter().map(|e| json!({
+                "id": e.observation_id,
+                "title": e.title,
+                "role": e.role,
+            })).collect::<Vec<_>>(),
+            "conflicts": resp.conflicts.iter().map(|c| json!({
+                "a_id": c.a_id,
+                "b_id": c.b_id,
+                "status": c.status,
+            })).collect::<Vec<_>>(),
+            "wrote_resolution": resp.wrote_resolution,
+            "resolution_observation_id": resp.resolution_observation_id,
         })))
     }
 
@@ -477,7 +525,8 @@ impl ServerHandler for MemoryServer {
             ))
             .with_instructions(
                 "memlayer local memory tools. Prefer memory_search / memory_recent / \
-                 memory_context for reads and memory_add for writes. Call memory_health \
+                 memory_context for reads, memory_add for writes, and memory_decide \
+                 when the user must choose between conflicting notes. Call memory_health \
                  only after another tool errors — the daemon auto-starts on first use.",
             )
     }

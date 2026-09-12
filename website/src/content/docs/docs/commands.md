@@ -15,6 +15,7 @@ memlayer obs reindex [--force]                 # queue re-embedding and quantiza
 memlayer tui                                   # interactive observation browser
 memlayer doctor [--repair]                     # database integrity audit & auto-repair
 memlayer eval --smoke --save-scorecard card.json
+memlayer decide "Should we keep SQLite or move to Postgres?"
 memlayer config show
 memlayer daemon status
 memlayer logs --lines 50
