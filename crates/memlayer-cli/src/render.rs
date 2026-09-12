@@ -1171,6 +1171,7 @@ mod tests {
         let r = p::SearchObservationsResponse {
             observations: vec![],
             warning: Some("capped at 32 projects".to_string()),
+            tokens_used: None,
         };
         let mut buf = Vec::new();
         r.render_text(&mut buf).unwrap();
@@ -1228,7 +1229,10 @@ mod tests {
                 updated_at: "2026-06-03T10:00:00Z".into(),
             }],
         };
-        let resp = p::ContextResponse { snapshot: Some(snap) };
+        let resp = p::ContextResponse {
+            snapshot: Some(snap),
+            tokens_used: None,
+        };
         let v = resp.to_json_value();
         assert!(v["recent_observations"].is_array());
         assert_eq!(v["recent_observations"].as_array().unwrap().len(), 1);
@@ -1236,7 +1240,10 @@ mod tests {
         assert!(v["snapshot"].is_null(), "snapshot wrapper must not appear");
 
         // Empty-snapshot path: arrays still present, not null.
-        let resp_empty = p::ContextResponse { snapshot: None };
+        let resp_empty = p::ContextResponse {
+            snapshot: None,
+            tokens_used: None,
+        };
         let v = resp_empty.to_json_value();
         assert_eq!(v["recent_observations"], json!([]));
         assert_eq!(v["active_topics"], json!([]));
