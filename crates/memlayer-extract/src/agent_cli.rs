@@ -24,6 +24,14 @@ use crate::opencode_models;
 
 const LLM_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// `(id, binary names, fast model, capable model)` for one known agent CLI.
+type ProviderSpec = (
+    &'static str,
+    &'static [&'static str],
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
 /// One supported agent CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provider {
@@ -33,12 +41,7 @@ pub struct Provider {
     pub capable_model: Option<&'static str>,
 }
 
-fn specs() -> &'static [(
-    &'static str,
-    &'static [&'static str],
-    Option<&'static str>,
-    Option<&'static str>,
-)] {
+fn specs() -> &'static [ProviderSpec] {
     &[
         ("cursor", &["cursor-agent", "agent"], None, None),
         ("copilot", &["copilot"], None, None),
@@ -112,14 +115,7 @@ fn home_has_hint(home: &Path, id: &str) -> bool {
     home_hints(id).iter().any(|rel| home.join(rel).exists())
 }
 
-fn lookup_spec(
-    id: &str,
-) -> Option<(
-    &'static str,
-    &'static [&'static str],
-    Option<&'static str>,
-    Option<&'static str>,
-)> {
+fn lookup_spec(id: &str) -> Option<ProviderSpec> {
     specs().iter().copied().find(|(sid, _, _, _)| *sid == id)
 }
 
@@ -218,7 +214,7 @@ fn infer_id_from_bin(bin: &str) -> &'static str {
         .and_then(|s| s.to_str())
         .unwrap_or(bin);
     for (id, bins, _, _) in specs() {
-        if bins.iter().any(|b| *b == name) {
+        if bins.contains(&name) {
             return id;
         }
     }
