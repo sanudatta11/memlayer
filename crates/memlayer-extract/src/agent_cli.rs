@@ -20,6 +20,8 @@ use tokio::process::Command;
 use tokio::time::timeout;
 use tracing::debug;
 
+use crate::opencode_models;
+
 const LLM_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// One supported agent CLI.
@@ -47,7 +49,18 @@ fn specs() -> &'static [(
             Some("gemini-2.5-pro"),
         ),
         ("codex", &["codex"], None, None),
-        ("opencode", &["opencode"], None, None),
+        (
+            "opencode",
+            &["opencode"],
+            Some(opencode_models::OPENCODE_FAST),
+            Some(opencode_models::OPENCODE_CAPABLE),
+        ),
+        (
+            "kilo",
+            &["kilo"],
+            Some(opencode_models::OPENCODE_FAST),
+            Some(opencode_models::OPENCODE_CAPABLE),
+        ),
         ("amazon-q", &["q"], None, None),
         ("kimi", &["kimi"], None, None),
         ("windsurf", &["windsurf"], None, None),
@@ -70,6 +83,7 @@ fn home_hints(id: &str) -> &'static [&'static str] {
         "claude" => &[".claude"],
         "codex" => &[".codex"],
         "opencode" => &[".config/opencode"],
+        "kilo" => &[".config/kilo", ".kilo", ".kilocode"],
         "amazon-q" => &[".aws/amazonq"],
         "kimi" => &[".kimi", ".kimi-code"],
         "windsurf" => &[".codeium/windsurf"],
@@ -231,6 +245,9 @@ pub fn map_model(provider: &Provider, requested: &str) -> Option<String> {
     if r.is_empty() {
         return None;
     }
+    if matches!(provider.id, "opencode" | "kilo") {
+        return opencode_models::resolve(requested);
+    }
     let lower = r.to_ascii_lowercase();
     if matches!(lower.as_str(), "auto" | "default" | "agent") {
         return None;
@@ -274,10 +291,10 @@ pub fn build_args(provider_id: &str, prompt: &str, model: Option<&str>) -> Vec<S
             }
             args.push(prompt.to_string());
         }
-        "opencode" => {
+        "opencode" | "kilo" => {
             args.push("run".into());
             if let Some(m) = model {
-                args.push("--model".into());
+                args.push("-m".into());
                 args.push(m.to_string());
             }
             args.push(prompt.to_string());
@@ -472,5 +489,48 @@ mod tests {
         assert!(ids.contains(&"cursor"));
         assert!(ids.contains(&"gemini"));
         assert!(ids.contains(&"codex"));
+        assert!(ids.contains(&"opencode"));
+        assert!(ids.contains(&"kilo"));
+    }
+
+    #[test]
+    fn opencode_maps_zen_catalog_and_nicknames() {
+        let p = Provider {
+            id: "opencode",
+            bin: "opencode".into(),
+            fast_model: Some(opencode_models::OPENCODE_FAST),
+            capable_model: Some(opencode_models::OPENCODE_CAPABLE),
+        };
+        assert_eq!(map_model(&p, "fast").as_deref(), Some(opencode_models::OPENCODE_FAST));
+        assert_eq!(map_model(&p, "glm").as_deref(), Some("opencode/glm-5.3"));
+        assert_eq!(map_model(&p, "qwen").as_deref(), Some("opencode/qwen3.7-plus"));
+        assert_eq!(
+            map_model(&p, "haiku").as_deref(),
+            Some("opencode/claude-haiku-4-5")
+        );
+        assert_eq!(
+            map_model(&p, "claude-haiku-4-5").as_deref(),
+            Some("opencode/claude-haiku-4-5")
+        );
+        let args = build_args("opencode", "rank these", map_model(&p, "glm").as_deref());
+        assert_eq!(args[0], "run");
+        assert!(args.contains(&"-m".into()));
+        assert!(args.contains(&"opencode/glm-5.3".into()));
+    }
+
+    #[test]
+    fn kilo_reuses_opencode_model_map() {
+        let p = Provider {
+            id: "kilo",
+            bin: "kilo".into(),
+            fast_model: Some(opencode_models::OPENCODE_FAST),
+            capable_model: Some(opencode_models::OPENCODE_CAPABLE),
+        };
+        assert_eq!(
+            map_model(&p, "deepseek").as_deref(),
+            Some("opencode/deepseek-v4-pro")
+        );
+        let args = build_args("kilo", "summarize", None);
+        assert_eq!(args[0], "run");
     }
 }

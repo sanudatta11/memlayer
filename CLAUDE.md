@@ -100,6 +100,8 @@ timeout_secs = 5
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
 `MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
 `MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`.
+OpenCode/Kilo: `MEMLAYER_LLM_MODEL=qwen` / `glm` / `deepseek` / `kimi` (or any Zen id)
+expands to `opencode/<id>` — 50+ catalog ids in `opencode_models.rs`.
 
 ## Proto + gRPC surface (current RPCs)
 
