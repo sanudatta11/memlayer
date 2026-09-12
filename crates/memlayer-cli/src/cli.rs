@@ -354,6 +354,9 @@ pub struct ObsSearchArgs {
     /// then the un-reranked hybrid result is returned.
     #[arg(long, value_parser = ["haiku", "sonnet", "fast", "capable"])]
     pub rerank: Option<String>,
+    /// Soft token budget for returned observations (estimated chars/4).
+    #[arg(long)]
+    pub max_tokens: Option<i32>,
 }
 
 #[derive(Args, Debug)]
@@ -402,6 +405,9 @@ pub struct ObsContextArgs {
     /// (overrides `verify.serve_stale = false`).
     #[arg(long)]
     pub include_stale: bool,
+    /// Soft token budget for returned observations (estimated chars/4).
+    #[arg(long)]
+    pub max_tokens: Option<i32>,
 }
 
 #[derive(Args, Debug)]

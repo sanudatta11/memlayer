@@ -17,13 +17,15 @@ use serde::Deserialize;
 pub struct SearchArgs {
     /// Full-text query to search stored memory for.
     pub query: String,
-    /// Retrieval mode: "bm25" (default) or "hybrid" (BM25 + dense, RRF-fused).
+    /// Retrieval mode: "hybrid" (default from config) or "bm25".
     pub mode: Option<String>,
     /// Optional reranker. Omit to use the invoking agent's current model.
     /// Pass a concrete id (e.g. `opencode/glm-5.3`) to pin one.
     pub rerank: Option<String>,
     /// Maximum number of results (default 10).
     pub limit: Option<i32>,
+    /// Soft token budget (estimated chars/4). Omit for unlimited.
+    pub max_tokens: Option<i32>,
     /// Filter by observation type (e.g. "decision", "fix", "pattern").
     #[serde(rename = "type")]
     pub type_: Option<String>,
@@ -63,6 +65,8 @@ pub struct ContextArgs {
     pub rerank: Option<String>,
     /// Maximum number of recent observations to include (default 10).
     pub limit: Option<i32>,
+    /// Soft token budget (estimated chars/4). Omit for unlimited.
+    pub max_tokens: Option<i32>,
     /// Project to read; defaults to the server's working-directory project.
     pub project: Option<String>,
 }

@@ -330,6 +330,9 @@ pub struct SearchConfig {
     pub decay_lambda: f64,
     /// When > 0, `context` expands each hit with ±N same-session neighbors.
     pub evidence_window: u32,
+    /// Cap hits per `observations.type` (0 = unlimited). Round-robins types
+    /// so one noisy type cannot crowd out the rest.
+    pub max_per_type: u32,
 }
 
 impl Default for SearchConfig {
@@ -339,6 +342,7 @@ impl Default for SearchConfig {
             rerank: false,
             decay_lambda: 0.0,
             evidence_window: 0,
+            max_per_type: 0,
         }
     }
 }
@@ -565,6 +569,13 @@ fn apply_memlayer_env_overrides(cfg: &mut MemlayerConfig) {
             cfg.search.evidence_window = n;
         } else {
             tracing::warn!(value = %v, "ignoring MEMLAYER_SEARCH_EVIDENCE_WINDOW: not an integer");
+        }
+    }
+    if let Ok(v) = std::env::var("MEMLAYER_SEARCH_MAX_PER_TYPE") {
+        if let Ok(n) = v.parse::<u32>() {
+            cfg.search.max_per_type = n;
+        } else {
+            tracing::warn!(value = %v, "ignoring MEMLAYER_SEARCH_MAX_PER_TYPE: not an integer");
         }
     }
 }

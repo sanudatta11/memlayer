@@ -106,6 +106,9 @@ serve_stale = false     # context withdraws stale/invalidated/unprovable; search
 [search]
 mode = "hybrid"         # "hybrid" | "bm25"
 rerank = false
+decay_lambda = 0.0      # time decay; 0 = off (eval uses 0.005)
+evidence_window = 0     # ±N same-session neighbors in context; 0 = off
+max_per_type = 0        # per-type quota; 0 = unlimited
 ```
 
 **Env overrides** (highest precedence, any session):
@@ -114,6 +117,8 @@ rerank = false
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
 `MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
 `MEMLAYER_VERIFY_SERVE_STALE`, `MEMLAYER_SEARCH_MODE`,
+`MEMLAYER_SEARCH_DECAY_LAMBDA`, `MEMLAYER_SEARCH_EVIDENCE_WINDOW`,
+`MEMLAYER_SEARCH_MAX_PER_TYPE`,
 `MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`.
 Roles (`fast`/`capable`) inherit the invoking agent's current model. Pin with
 `MEMLAYER_LLM_MODEL` or a concrete id (`qwen`, `opencode/glm-5.3`). Host hints:

@@ -10,6 +10,7 @@ memlayer obs recent --limit 10
 memlayer obs search "auth"                     # hybrid (BM25 + dense + RRF)
 memlayer obs search "auth" --mode bm25         # lexical only
 memlayer obs context --query "deploy" --limit 20
+memlayer obs context --max-tokens 500         # pack until budget (estimate)
 memlayer obs context --include-stale           # keep stale/invalidated claims
 memlayer verify                                # re-check code anchors vs HEAD
 memlayer obs history <id>                      # supersession chain tree

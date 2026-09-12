@@ -197,12 +197,16 @@ message SearchObservationsRequest {
   // Optional reranker model: "haiku" or "sonnet". Empty/absent = no rerank.
   // Hard 5s timeout; on timeout the un-reranked hybrid result is returned.
   optional string rerank = 8;
+  // Soft token budget (estimate_tokens). 0 / absent = unlimited.
+  optional int32 max_tokens = 9;
 }
 
 message SearchObservationsResponse {
   repeated Observation observations = 1;
   // Set when all_projects was capped at 32 (EC-10).
   optional string warning = 2;
+  // Estimated tokens used by the returned observations.
+  optional int32 tokens_used = 3;
 }
 
 message ListObservationsRequest {
@@ -250,9 +254,13 @@ message ContextRequest {
   // When true, include stale/invalidated/unprovable observations even if
   // verify.serve_stale is false. Unanchored observations are never filtered.
   bool include_stale = 7;
+  // Soft token budget (estimate_tokens). 0 / absent = unlimited.
+  optional int32 max_tokens = 8;
 }
 message ContextResponse {
   ContextSnapshot snapshot = 1;
+  // Estimated tokens used by snapshot.recent_observations.
+  optional int32 tokens_used = 2;
 }
 
 // ---

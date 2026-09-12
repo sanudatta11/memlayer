@@ -255,9 +255,15 @@ async fn search(
         limit: a.limit,
         mode: Some(a.mode),
         rerank: a.rerank,
+        max_tokens: a.max_tokens,
     };
     let resp = client.search_observations(req).await?.into_inner();
     write_render(&resp, fmt)?;
+    if fmt == Formatter::Text {
+        if let Some(t) = resp.tokens_used {
+            eprintln!("tokens_used (estimate) {t}");
+        }
+    }
     audit::record(&AuditEntry {
         ts: audit::now_rfc3339(),
         command: "obs.search",
@@ -358,6 +364,7 @@ pub(crate) async fn context(
             query: a.query.clone(),
             anchor: a.anchor.clone(),
             include_stale: a.include_stale,
+            max_tokens: a.max_tokens,
         };
         let resp = client.context(req).await?.into_inner();
         let recent_count = resp
@@ -366,6 +373,11 @@ pub(crate) async fn context(
             .map(|s| s.recent_observations.len())
             .unwrap_or(0);
         write_render(&resp, fmt)?;
+        if matches!(fmt, Formatter::Text) {
+            if let Some(t) = resp.tokens_used {
+                eprintln!("tokens_used (estimate) {t}");
+            }
+        }
         audit::record(&AuditEntry {
             ts: audit::now_rfc3339(),
             command: "obs.context",
@@ -394,6 +406,7 @@ pub(crate) async fn context(
         all_projects: false,
         mode: None,
         rerank: None,
+        max_tokens: None,
     };
     let summaries = client.search_observations(summary_req).await?.into_inner();
     if let Some(latest) = summaries.observations.first() {
@@ -438,6 +451,7 @@ pub(crate) async fn context(
         query: a.query.clone(),
         anchor: a.anchor.clone(),
         include_stale: a.include_stale,
+        max_tokens: a.max_tokens,
     };
     let resp = client.context(req).await?.into_inner();
     let recent_count = resp
@@ -451,7 +465,11 @@ pub(crate) async fn context(
             for o in &s.recent_observations {
                 writeln!(h, "- [{}] {}: {}", o.r#type, o.title, o.content)?;
             }
+            writeln!(h)?;
         }
+    }
+    if let Some(t) = resp.tokens_used {
+        writeln!(h, "# tokens_used (estimate) {t}")?;
     }
     audit::record(&AuditEntry {
         ts: audit::now_rfc3339(),

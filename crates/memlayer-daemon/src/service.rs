@@ -525,6 +525,23 @@ fn expand_evidence_window(
     out
 }
 
+/// Apply per-type quota, stale filter, then token budget to context hits.
+fn finalize_context_hits(
+    conn: &rusqlite::Connection,
+    hits: Vec<Observation>,
+    project_name: &str,
+    include_stale: bool,
+    max_per_type: u32,
+    max_tokens: u32,
+) -> (Vec<memlayer_proto::Observation>, i32) {
+    let hits = crate::token_budget::apply_max_per_type(hits, max_per_type);
+    let mut recent = observations_to_proto(conn, hits);
+    filter_context_observations(&mut recent, project_name, include_stale);
+    let (recent, tokens_used) =
+        crate::token_budget::pack_proto_by_token_budget(recent, max_tokens);
+    (recent, tokens_used as i32)
+}
+
 /// Parse and stamp anchors for a just-saved observation. Returns an optional
 /// warning when the directory is not a git repo (save still succeeds).
 async fn stamp_observation_anchors(
@@ -1074,7 +1091,7 @@ impl Memlayer for MemlayerService {
                             .filter_map(|k| obs_map.remove(&k))
                             .collect();
 
-                        return Ok(Response::new(SearchObservationsResponse { observations, warning: None }));
+                        return Ok(Response::new(SearchObservationsResponse { observations, warning: None, tokens_used: None }));
                     }
                 }
                 // Fall through to BM25-only if no embedder.
@@ -1116,6 +1133,7 @@ impl Memlayer for MemlayerService {
                 return Ok(Response::new(SearchObservationsResponse {
                     observations,
                     warning: None,
+                    tokens_used: None,
                 }));
             }
 
@@ -1136,6 +1154,7 @@ impl Memlayer for MemlayerService {
             return Ok(Response::new(SearchObservationsResponse {
                 observations: hits.into_iter().map(obs_to_proto).collect(),
                 warning,
+                tokens_used: None,
             }));
         }
         let hits = if self.resolved_search_mode(r.mode.as_deref(), &r.project_name)
@@ -1163,9 +1182,14 @@ impl Memlayer for MemlayerService {
             Some(model) => self.rerank_hits(&model, &r.query, hits).await,
             None => hits,
         };
+        let cfg = memlayer_core::config::load_resolved(Some(&r.project_name));
+        let hits = crate::token_budget::apply_max_per_type(hits, cfg.search.max_per_type);
+        let max_tokens = r.max_tokens.unwrap_or(0).max(0) as u32;
+        let (hits, tokens_used) = crate::token_budget::pack_by_token_budget(hits, max_tokens);
         Ok(Response::new(SearchObservationsResponse {
             observations: observations_to_proto(&conn, hits),
             warning: None,
+            tokens_used: Some(tokens_used as i32),
         }))
     }
 
@@ -1232,18 +1256,27 @@ impl Memlayer for MemlayerService {
 
         let cfg = memlayer_core::config::load_resolved(Some(&r.project_name));
         let evidence_window = cfg.search.evidence_window;
+        let max_per_type = cfg.search.max_per_type;
+        let max_tokens = r.max_tokens.unwrap_or(0).max(0) as u32;
 
         if let Some(anchor) = r.anchor.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
             let hits = map(read_q::search_by_anchor(&conn, anchor, limit))?;
             let hits = expand_evidence_window(&conn, hits, evidence_window, limit);
-            let mut recent = observations_to_proto(&conn, hits);
-            filter_context_observations(&mut recent, &r.project_name, r.include_stale);
+            let (recent, tokens_used) = finalize_context_hits(
+                &conn,
+                hits,
+                &r.project_name,
+                r.include_stale,
+                max_per_type,
+                max_tokens,
+            );
             let snapshot = ContextSnapshot {
                 recent_observations: recent,
                 active_topics: vec![],
             };
             return Ok(Response::new(ContextResponse {
                 snapshot: Some(snapshot),
+                tokens_used: Some(tokens_used),
             }));
         }
 
@@ -1268,8 +1301,14 @@ impl Memlayer for MemlayerService {
             _ => {
                 let (recents, topics) = map(read_q::recent_active(&conn, limit))?;
                 let recents = expand_evidence_window(&conn, recents, evidence_window, limit);
-                let mut recent = observations_to_proto(&conn, recents);
-                filter_context_observations(&mut recent, &r.project_name, r.include_stale);
+                let (recent, tokens_used) = finalize_context_hits(
+                    &conn,
+                    recents,
+                    &r.project_name,
+                    r.include_stale,
+                    max_per_type,
+                    max_tokens,
+                );
                 let snapshot = ContextSnapshot {
                     recent_observations: recent,
                     active_topics: topics
@@ -1284,17 +1323,25 @@ impl Memlayer for MemlayerService {
                 };
                 return Ok(Response::new(ContextResponse {
                     snapshot: Some(snapshot),
+                    tokens_used: Some(tokens_used),
                 }));
             }
         };
-        let mut recent = observations_to_proto(&conn, recents);
-        filter_context_observations(&mut recent, &r.project_name, r.include_stale);
+        let (recent, tokens_used) = finalize_context_hits(
+            &conn,
+            recents,
+            &r.project_name,
+            r.include_stale,
+            max_per_type,
+            max_tokens,
+        );
         let snapshot = ContextSnapshot {
             recent_observations: recent,
             active_topics: vec![],
         };
         Ok(Response::new(ContextResponse {
             snapshot: Some(snapshot),
+            tokens_used: Some(tokens_used),
         }))
     }
 

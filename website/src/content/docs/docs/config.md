@@ -23,6 +23,9 @@ memlayer config set extract.enabled false    # skip fact triples on save
 memlayer config set search.mode bm25         # lexical-only retrieval
 memlayer config set embed.quantize true      # int8 vectors (~75% smaller)
 memlayer config set verify.serve_stale true  # keep stale claims in context
+memlayer config set search.decay_lambda 0.005
+memlayer config set search.evidence_window 2
+memlayer config set search.max_per_type 2
 memlayer obs reindex                         # backfill embeddings
 ```
 
@@ -40,6 +43,8 @@ Merge order (highest wins): env vars → project overlay → global → code def
 `MEMLAYER_EMBED_WORKERS`, `MEMLAYER_EMBED_QUANTIZE`,
 `MEMLAYER_CONFLICT_ENABLED`, `MEMLAYER_CONFLICT_MODEL`, `MEMLAYER_CONFLICT_TIMEOUT_SECS`,
 `MEMLAYER_VERIFY_SERVE_STALE`, `MEMLAYER_SEARCH_MODE`,
+`MEMLAYER_SEARCH_DECAY_LAMBDA`, `MEMLAYER_SEARCH_EVIDENCE_WINDOW`,
+`MEMLAYER_SEARCH_MAX_PER_TYPE`,
 `MEMLAYER_LLM_BIN`, `MEMLAYER_LLM_PROVIDER`, `MEMLAYER_LLM_MODEL`
 (legacy `MEMLAYER_CLAUDE_MODEL` is the same as `MEMLAYER_LLM_MODEL`).
 

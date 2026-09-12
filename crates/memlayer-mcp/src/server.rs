@@ -216,6 +216,7 @@ impl MemoryServer {
             limit: clamp_limit(args.limit, 10),
             mode: Some(args.mode.unwrap_or_else(default_search_mode)),
             rerank: args.rerank,
+            max_tokens: args.max_tokens,
         };
         let resp = self
             .client
@@ -227,6 +228,7 @@ impl MemoryServer {
         Ok(CallToolResult::structured(json!({
             "observations": resp.observations.iter().map(render::observation_hit).collect::<Vec<_>>(),
             "warning": resp.warning,
+            "tokens_used": resp.tokens_used,
         })))
     }
 
@@ -299,6 +301,7 @@ impl MemoryServer {
             query: args.query.filter(|q| !q.trim().is_empty()),
             anchor: None,
             include_stale: false,
+            max_tokens: args.max_tokens,
         };
         let resp = self
             .client
@@ -314,6 +317,7 @@ impl MemoryServer {
                 "topic_key": t.topic_key,
                 "scope": t.scope,
             })).collect::<Vec<_>>(),
+            "tokens_used": resp.tokens_used,
         })))
     }
 

@@ -77,6 +77,7 @@ pub async fn dispatch(client: &mut Client, project_name: &str, args: PreToolArgs
         limit: HOOK_HIT_LIMIT,
         mode: None,
         rerank: None,
+        max_tokens: None,
     };
 
     let result = tokio::time::timeout(HOOK_TIMEOUT, client.search_observations(req)).await;
@@ -144,6 +145,7 @@ pub async fn dispatch_session_start(project_name: &str, limit: i32) -> ExitCode 
         rerank: None,
         anchor: None,
         include_stale: false,
+        max_tokens: None,
     };
     let _ = crate::cmd_obs::context(
         &mut client,
