@@ -66,6 +66,13 @@ cargo test -p memlayer-storage --lib -- history_chain
 
 # Run daemon in foreground (for debugging):
 RUST_LOG=memlayer=debug cargo run -p memlayer-cli -- daemon start --foreground
+
+# LoCoMo local analysis (scorecards in ./eval/, gitignored)
+make eval-locomo-smoke              # fixture, no dataset / LLM
+make eval-locomo                    # full locomo10 (needs BGE + agent CLI)
+LIMIT=50 make eval-locomo           # cheaper slice
+make eval-locomo-e2e                # smoke then full
+make eval-locomo-compare SCORECARD=eval/locomo-full.json
 ```
 
 ## Config quick-reference (MemlayerConfig)

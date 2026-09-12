@@ -15,6 +15,7 @@ memlayer obs reindex [--force]                 # queue re-embedding and quantiza
 memlayer tui                                   # interactive observation browser
 memlayer doctor [--repair]                     # database integrity audit & auto-repair
 memlayer eval --smoke --save-scorecard card.json
+# from repo root: make eval-locomo-smoke | make eval-locomo | make eval-locomo-e2e
 memlayer decide "Should we keep SQLite or move to Postgres?"
 memlayer config show
 memlayer daemon status

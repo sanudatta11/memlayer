@@ -37,3 +37,4 @@ The daemon auto-starts on first use.
 - [Install](/docs/install/) if you have not built the binary yet
 - [Wire into your agent](/docs/agents/) for MCP / skills registration
 - [Everyday commands](/docs/commands/) for the full day-to-day surface
+- [LoCoMo eval](/docs/locomo/) for smoke/full benchmark runs
