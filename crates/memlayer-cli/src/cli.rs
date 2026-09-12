@@ -83,9 +83,7 @@ pub enum Command {
     /// embed). Backed by `~/.memlayer/config.toml` (global) and
     /// `~/.memlayer/projects/<name>.config.toml` (per-project).
     Config(ConfigArgs),
-    /// Re-index all observations into the vector store. Skeleton verb in
-    /// v1 — prints manual instructions; full implementation in a follow-up
-    /// spec.
+    /// Re-index all observations into the vector store (`memlayer reindex`).
     Reindex(ReindexArgs),
     /// Run the local stdio MCP server, exposing memory tools to MCP-capable
     /// agents (Claude Code, Windsurf). Speaks MCP on stdout; logs to stderr.
@@ -254,7 +252,7 @@ pub enum ObsVerb {
     CapturePassive(ObsCapturePassiveArgs),
     /// Print atomic facts attached to an observation (retrieval-promotion).
     Facts(ObsFactsArgs),
-    /// Stub: re-extract facts from observations since a date.
+    /// Re-extract facts from observations since a date (needs extract.enabled).
     Reextract(ObsReextractArgs),
     /// Print the full supersession history of an observation (oldest → newest).
     History(ObsHistoryArgs),
@@ -419,7 +417,7 @@ pub struct ObsFactsArgs {
 #[derive(Args, Debug)]
 pub struct ObsReextractArgs {
     /// Re-extract facts from observations created on or after this date
-    /// (RFC-3339). Skeleton verb in v1; emits a deferred-feature notice.
+    /// (RFC-3339). Requires `extract.enabled = true`.
     #[arg(long)]
     pub since: Option<String>,
 }
@@ -518,8 +516,7 @@ pub struct ConfigSetArgs {
 
 #[derive(Args, Debug)]
 pub struct ReindexArgs {
-    /// Reserved for future use; the v1 stub ignores all flags and prints
-    /// manual reindex instructions.
+    /// Clear existing embeddings and re-queue every observation.
     #[arg(long)]
     pub force: bool,
 }

@@ -1412,8 +1412,6 @@ impl Memlayer for MemlayerService {
     }
 
     /// `obs facts <id>` — return atomic facts attached to an observation.
-    /// Real implementation lands in rp-t10; this stub keeps the trait
-    /// surface intact so rp-t7 (proto + CLI flag wiring) can land.
     async fn get_facts(
         &self,
         req: Request<GetFactsRequest>,

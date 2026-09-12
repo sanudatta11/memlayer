@@ -675,9 +675,8 @@ async fn facts(
     Ok(())
 }
 
-/// Stub implementation for `obs reextract`. Lands in rp-t13 as a
 /// `obs reextract [--since <rfc3339>]` — queue historical observations for
-/// fact re-extraction. Requires extract.enabled = true in the project config.
+/// fact re-extraction. Requires `extract.enabled = true` in project config.
 async fn reextract(
     client: &mut Client,
     project_name: &str,
