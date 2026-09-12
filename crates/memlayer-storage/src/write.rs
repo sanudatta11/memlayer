@@ -964,8 +964,9 @@ fn find_conflict_candidate(
 /// Decide whether to supersede `old_id` given the new `input`.
 ///
 /// 1. If a `conflict_classifier` is present and `cfg.conflict.enabled` is
-///    true for this project, ask the LLM. `Supersedes` or `ConflictsWith`
-///    → supersede; `Compatible` or `NotConflict` → keep both.
+///    true for this project, ask the LLM. `Supersedes` → supersede;
+///    `ConflictsWith` → keep both and record `conflicts_with`;
+///    `Compatible` or `NotConflict` → keep both.
 /// 2. On any error (timeout, network, parse) fall back to heuristic
 ///    (supersede unconditionally, matching pre-Spec-4 behavior).
 /// 3. If no classifier is wired, always supersede (current default).
@@ -1014,7 +1015,12 @@ fn should_supersede(
         }
         Ok(ConflictVerdict::ConflictsWith) => {
             let _ = crate::relations::add_relation(tx, new_id, old_id, "conflicts_with", 0.95);
-            true
+            tracing::debug!(
+                old_id,
+                new_title = %input.title,
+                "conflict judge: keeping both (ConflictsWith)"
+            );
+            false
         }
         Ok(ConflictVerdict::Compatible) => {
             let _ = crate::relations::add_relation(tx, new_id, old_id, "compatible", 0.85);
@@ -1097,6 +1103,54 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.content, "hello");
+    }
+
+    struct ConflictsWithClassifier;
+    impl crate::conflict_judge::ConflictClassifier for ConflictsWithClassifier {
+        fn classify(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+        ) -> anyhow::Result<crate::conflict_judge::ConflictVerdict> {
+            Ok(crate::conflict_judge::ConflictVerdict::ConflictsWith)
+        }
+    }
+
+    #[test]
+    fn conflicts_with_keeps_both_rows() {
+        std::env::set_var("MEMLAYER_CONFLICT_ENABLED", "true");
+        let (_d, mut conn) = open_test_db();
+        let mut a = save_input("use redis for sessions");
+        a.title = "session store".into();
+        a.sync_id = Some("sync-old".into());
+        let mut b = save_input("use postgres for sessions");
+        b.title = "session store".into();
+        b.sync_id = Some("sync-new".into());
+        let tx = conn.transaction().unwrap();
+        let o1 = handle_save_observation(&tx, a, Some(&ConflictsWithClassifier)).unwrap();
+        let o2 = handle_save_observation(&tx, b, Some(&ConflictsWithClassifier)).unwrap();
+        let n_active: i64 = tx
+            .query_row(
+                "SELECT count(*) FROM observations WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let n_rel: i64 = tx
+            .query_row(
+                "SELECT count(*) FROM observation_relations WHERE relation_type = 'conflicts_with'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        tx.commit().unwrap();
+        std::env::remove_var("MEMLAYER_CONFLICT_ENABLED");
+        assert_eq!(n_active, 2, "both rows stay active");
+        assert_eq!(o1.deleted_at, None);
+        assert_eq!(o2.deleted_at, None);
+        assert_eq!(n_rel, 1);
     }
 
     #[test]
