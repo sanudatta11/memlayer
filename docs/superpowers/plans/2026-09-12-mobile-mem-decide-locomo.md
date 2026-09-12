@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Never write the substring matching a third-party memory product name in code, comments, prompts, docs, CLI help, or commits. Use **Decide**, **resolution judge**, **memlayer archive**.
-- Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed.
+- Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed. After every successful `mem export`, print the seed-encryption note (unencrypted vs encrypted variant) to stderr.
 - Migrations: no new SQL file unless a later task proves V8 `observation_relations.relation_type` is insufficient. Prefer `resolved_by` as a relation string.
 - Write-thread: all DB mutations go through `WriteRequest` / `WriteRequest::Custom`.
 - Worker pools: `try_queue` drops on full; never block save.
@@ -557,6 +557,7 @@ pub struct MemArgs {
 
 pub enum MemVerb {
     /// Write a compressed .mem snapshot of the project.
+    /// Default is obfuscated only. Pass --seed-file or --seed-phrase to encrypt.
     Export(MemExportArgs),
     /// Read a .mem snapshot into the project.
     Import(MemImportArgs),
@@ -629,12 +630,43 @@ fn mem_export_seed_file_parses() {
 
 ```bash
 memlayer mem export --out backup.mem
+# prints a note about --seed-file / --seed-phrase
 memlayer mem export --out secret.mem --seed-file ./phrase.txt
 memlayer mem import backup.mem
 memlayer mem import secret.mem --seed-file ./phrase.txt
 ```
 
 CLI must read `--seed-file` (trim newline), reject both flags together, pass the string only in the gRPC request, and never print it.
+
+- [ ] **Step 4b: Post-export note (required)**
+
+Add in `cmd_mem.rs`:
+
+```rust
+const HINT_UNENCRYPTED: &str = "\
+note: archive is not seed-encrypted (obfuscated only).\n\
+      encrypt with a seed phrase (same phrase required on import):\n\
+        memlayer mem export --out FILE.mem --seed-file ./phrase.txt\n\
+        memlayer mem export --out FILE.mem --seed-phrase 'your phrase here'\n\
+      keep the phrase; it cannot be recovered.";
+
+const HINT_ENCRYPTED: &str = "\
+note: archive is seed-encrypted. import needs the same --seed-file or --seed-phrase.\n\
+      if you lose the phrase, this file cannot be opened.";
+```
+
+After a successful `export` RPC, `eprintln!` `HINT_UNENCRYPTED` when neither seed flag was set, else `HINT_ENCRYPTED`. Always print (including non-TTY). JSON render adds `seed_encrypted` and `hint` (first line only).
+
+Unit test:
+
+```rust
+#[test]
+fn unencrypted_hint_mentions_seed_flags() {
+    assert!(HINT_UNENCRYPTED.contains("--seed-file"));
+    assert!(HINT_UNENCRYPTED.contains("--seed-phrase"));
+    assert!(HINT_UNENCRYPTED.contains("not seed-encrypted"));
+}
+```
 
 - [ ] **Step 5: Commit**
 

@@ -216,6 +216,36 @@ memlayer mem import backup.mem --seed-file ./phrase.txt --mode merge
 seed over the local UDS gRPC channel; handlers must not write it to
 `tracing` fields.
 
+**Export UX (required):** after a successful export, the CLI always
+prints a short note so the option is discoverable without reading docs.
+
+- **No seed used** (default wrap) — write to **stderr** (TTY and pipes)
+  so stdout JSON stays valid:
+
+```
+note: archive is not seed-encrypted (obfuscated only).
+      encrypt with a seed phrase (same phrase required on import):
+        memlayer mem export --out FILE.mem --seed-file ./phrase.txt
+        memlayer mem export --out FILE.mem --seed-phrase 'your phrase here'
+      keep the phrase; it cannot be recovered.
+```
+
+- **Seed used** — stderr:
+
+```
+note: archive is seed-encrypted. import needs the same --seed-file or --seed-phrase.
+      if you lose the phrase, this file cannot be opened.
+```
+
+JSON `--output json` includes `"seed_encrypted": false` and
+`"hint": "<first line of the note>"` on the success object. Clap
+`--help` for `mem export` must mention both flags in the command
+about/long_help (same wording, not only after a run).
+
+Do not print the phrase itself. Do not skip the unencrypted note when
+stdout is not a TTY — users who script exports still need to know the
+option exists.
+
 Reject paths that do not end in `.mem`. Magic mismatch → clear error
 “not a memlayer archive”.
 
