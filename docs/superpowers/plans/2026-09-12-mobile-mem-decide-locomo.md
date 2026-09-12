@@ -2,26 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the clipped mobile `memlayer` header; add a native compressed `.mem` archive; make LoCoMo eval actually run hybrid+facts retrieval; add Decide plus auto resolution on conflicting memories — without naming any third-party memory product anywhere in the tree.
+**Goal:** Fix the clipped mobile `memlayer` header; add a native compressed `.mem` archive with optional seed encryption; make LoCoMo eval real and promote hybrid+facts retrieval into the daemon; add Decide plus auto resolution; make `memlayer install` write local config; add optional Postgres shared storage for a team brain — without naming any third-party memory product anywhere in the tree.
 
-**Architecture:** Four sequential PRs. CSS-only header fix. Archive codec in `memlayer-sync` (MLYR + MessagePack + zstd-19; default XOR wrap; optional Argon2id + XChaCha20-Poly1305 from a seed phrase) with daemon snapshot/import. Eval CLI calls `runner::run` and defaults to `default_profile(Locomo)`. Save path keeps `ConflictsWith` rows, queues `resolve_worker`; `Decide` RPC retrieves, judges open conflicts, returns a structured recommendation and may write `type=resolution`.
+**Architecture:** Sequential PRs. CSS header fix. `.mem` codec (MLYR + MessagePack + zstd-19; XOR default; Argon2id+XChaCha20-Poly1305 optional). Hybrid-by-default search + fact fusion in the daemon. Install deep-merges `~/.memlayer/config.toml`. Eval CLI calls `runner::run`. Save keeps `ConflictsWith` rows and queues resolve; Decide RPC. Optional `MemoryStore` Postgres backend (pgvector + tsvector) while SQLite files remain the default.
 
-**Tech Stack:** Starlight CSS, Rust, proto3/tonic, rusqlite, zstd 19, MessagePack (`rmp-serde`), Argon2id, XChaCha20-Poly1305, SHA-256, existing `ClaudeClient` shell-out, rmcp MCP tools.
+**Tech Stack:** Starlight CSS, Rust, proto3/tonic, rusqlite, sqlx+Postgres+pgvector (team), zstd 19, MessagePack, Argon2id, XChaCha20-Poly1305, BGE-small, Claude CLI, rmcp.
 
 ## Global Constraints
 
 - Never write the substring matching a third-party memory product name in code, comments, prompts, docs, CLI help, or commits. Use **Decide**, **resolution judge**, **memlayer archive**.
 - Default `.mem` is obfuscation (XOR after zstd). Optional `--seed-phrase` / `--seed-file` uses Argon2id + XChaCha20-Poly1305. Never call the default path “encrypted”. Never log the seed. After every successful `mem export` and `mem import`, print the seed-encryption note to stderr. Importing a seed-encrypted file without `--seed-file`/`--seed-phrase` is a hard error with a dedicated message (no TTY prompt, no AEAD/zstd internals).
 - Migrations: no new SQL file unless a later task proves V8 `observation_relations.relation_type` is insufficient. Prefer `resolved_by` as a relation string.
-- Write-thread: all DB mutations go through `WriteRequest` / `WriteRequest::Custom`.
+- Write-thread: SQLite mutations go through `WriteRequest` / `WriteRequest::Custom`. Postgres uses `sqlx` transactions instead of the crossbeam write thread.
 - Worker pools: `try_queue` drops on full; never block save.
-- Config: 3-level TOML merge; re-resolve per task; `conflict.enabled` default becomes `true`.
-- Tests: unit tests in crate `#[cfg(test)]`; do not rely on a live daemon for codec/eval-fixture tests.
+- Config: 3-level TOML merge; re-resolve per task; `conflict.enabled` default becomes `true`; `search.mode` default `hybrid`; `extract.enabled` default `true` after install merge.
+- Storage: SQLite files remain default. Team shared brain is **Postgres + pgvector**, not MySQL. `MEMLAYER_DATABASE_URL` when set selects postgres.
+- Tests: unit tests in crate `#[cfg(test)]`; Postgres tests skip without `MEMLAYER_DATABASE_URL`.
 - Branch names: `cursor/<descriptive>-8379` if this agent implements.
 
 **Spec:** `docs/superpowers/specs/2026-09-12-memory-export-decide-locomo-design.md`
 
-**Suggested PR split:** Tasks 1 | Tasks 2–5 | Tasks 6–7 | Tasks 8–12. Do not merge all four into one review if the diff exceeds ~800 lines of Rust.
+**Suggested PR split:** Tasks 1 | 2–4 | 11–13 | 5 | 6–8 | 14. Do not merge all into one review.
 
 ---
 
@@ -41,7 +42,12 @@
 | `crates/memlayer-daemon/src/service.rs` | RPC wiring |
 | `crates/memlayer-daemon/src/lib.rs` | Module decls |
 | `crates/memlayer-storage/src/write.rs` | Keep both on ConflictsWith; enqueue hook |
-| `crates/memlayer-core/src/config.rs` | Default conflict on |
+| `crates/memlayer-core/src/config.rs` | `search`, `conflict`, `storage` |
+| `crates/memlayer-cli/src/cmd_skill.rs` | install config bootstrap |
+| `crates/memlayer-retrieval/src/facts_fuse.rs` | fact+obs RRF |
+| `crates/memlayer-storage/src/store.rs` | `MemoryStore` trait |
+| `crates/memlayer-storage/src/postgres.rs` | Postgres backend |
+| `migrations/postgres/*.sql` | PG schema |
 | `crates/memlayer-cli/src/cli.rs` | `Mem` + `Decide` commands |
 | `crates/memlayer-cli/src/cmd_mem.rs` | CLI handlers |
 | `crates/memlayer-cli/src/cmd_decide.rs` | CLI handler |
@@ -234,8 +240,8 @@ mod tests {
     fn encrypted_without_seed_is_seed_required_not_corrupt() {
         let bytes = encode(&sample(), &params(Some("correct horse battery staple extra"))).unwrap();
         let err = decode(&bytes, None).unwrap_err();
-        assert!(matches!(err, SyncError::SeedRequired));
         let s = err.to_string();
+        assert!(matches!(err, SyncError::SeedRequired));
         assert!(!s.to_lowercase().contains("aead"));
         assert!(!s.to_lowercase().contains("checksum"));
     }
@@ -1096,6 +1102,229 @@ git commit -m "docs: document .mem archives and decide"
 
 ---
 
+### Task 11: Hybrid default + context honors query
+
+**Files:**
+- Modify: `crates/memlayer-core/src/config.rs` (add `SearchConfig`)
+- Modify: `crates/memlayer-cli/src/cli.rs` (search/context default mode empty → config)
+- Modify: `crates/memlayer-mcp/src/server.rs` (`unwrap_or` hybrid via config)
+- Modify: `crates/memlayer-cli/src/cmd_hook.rs`
+- Modify: `crates/memlayer-daemon/src/service.rs` (Context)
+- Modify: `crates/memlayer-retrieval/src/hybrid.rs` (`parse_wire` empty → None, caller fills)
+
+**Interfaces:**
+- Produces: `SearchConfig { mode: String /* "hybrid" */, rerank: bool, decay_lambda as string or skip if Eq constraint: store as string "0.005" or change MemlayerConfig PartialEq }`
+
+`MemlayerConfig` is `PartialEq + Eq` today. Keep `decay_lambda` out of Eq config: store `rerank: bool` and `mode: String`. Apply `DEFAULT_DECAY_LAMBDA` constant in retrieval (already 0.005).
+
+- [ ] **Step 1: Failing test** — `HybridMode::parse_wire("")` used by daemon with config mode hybrid must not become Bm25 when config says hybrid.
+
+```rust
+#[test]
+fn search_config_default_is_hybrid() {
+    let c = MemlayerConfig::default();
+    assert_eq!(c.search.mode, "hybrid");
+}
+```
+
+Change `SearchObservations` / `Context` CLI `default_value = "bm25"` to no default (Option) or default `"hybrid"`.
+
+- [ ] **Step 2: Context handler** — if `req.query` trimmed non-empty, call the same retrieve path as search (mode from config). Only `recent_active` when query is empty.
+
+```rust
+let q = req.query.as_deref().unwrap_or("").trim();
+if !q.is_empty() {
+    return search_as_context(state, project, q, mode, rerank, limit).await;
+}
+```
+
+- [ ] **Step 3:** MCP `memory_search` / `memory_context` use `cfg.search.mode` when args.mode is None.
+
+- [ ] **Step 4:** `cargo test -p memlayer-core --lib -- search_config`
+
+- [ ] **Step 5: Commit** `feat(retrieval): default hybrid search and honor context query`
+
+---
+
+### Task 12: Fact-aware daemon search + save topic_key + drop warnings
+
+**Files:**
+- Create: `crates/memlayer-retrieval/src/facts_fuse.rs` (port RRF of fact parent ids from `memlayer-eval/src/retrieve_facts.rs`; keep eval calling the shared fn)
+- Modify: `crates/memlayer-daemon/src/service.rs` `hybrid_search`
+- Modify: `crates/memlayer-mcp/src/server.rs` `memory_add`
+- Modify: `crates/memlayer-storage/src/write.rs` or service save: suggest topic_key when empty
+- Modify: `proto` SaveObservationResponse if a `warning` field exists; else log + CLI stderr from a new optional `warnings` repeated string — add `repeated string warnings = 3` on SaveObservationResponse if absent
+
+**Interfaces:**
+- Consumes: `search_facts` in `storage/facts.rs`
+- Produces: fused obs list; `warnings` containing `embed_dropped` / `extract_dropped`
+
+- [ ] **Step 1:** Unit test facts_fuse: two id lists RRF → known order (copy a small eval test).
+
+- [ ] **Step 2:** In `hybrid_search`, if facts table nonempty, fuse. If empty, current hybrid only.
+
+- [ ] **Step 3:** Save path: `if input.topic_key.is_none() { input.topic_key = Some(suggest_topic_key(&title, &content)); }` using existing suggest implementation.
+
+- [ ] **Step 4:** If `embed_pool.try_queue` returns false, push warning.
+
+- [ ] **Step 5: Commit** `feat(retrieval): fuse facts into search; auto topic_key; queue-drop warnings`
+
+---
+
+### Task 13: Install writes and merges `~/.memlayer/config.toml`
+
+**Files:**
+- Create: `crates/memlayer-core/src/config_bootstrap.rs` or functions in `config.rs`: `ensure_memlayer_home(home: &Path) -> Result<BootstrapReport>`
+- Modify: `crates/memlayer-cli/src/cmd_skill.rs` `dispatch` — call before agent loops
+- Test: `config.rs` tests with tempfile HOME
+
+**Interfaces:**
+- Produces: `BootstrapReport { created: bool, merged_keys: Vec<String>, backend: String, search_mode: String, extract: bool, conflict: bool }`
+
+- [ ] **Step 1: Failing test**
+
+```rust
+#[test]
+fn bootstrap_creates_file_with_hybrid_and_extract() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    std::env::set_var("HOME", home); // or pass path into ensure_memlayer_home
+    let r = ensure_config_toml(&home.join(".memlayer")).unwrap();
+    assert!(r.created);
+    let raw = std::fs::read_to_string(home.join(".memlayer/config.toml")).unwrap();
+    assert!(raw.contains("mode = \"hybrid\""));
+    assert!(raw.contains("enabled = true")); // extract + conflict
+}
+
+#[test]
+fn bootstrap_does_not_clobber_search_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_dir = dir.path().join(".memlayer");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    std::fs::write(cfg_dir.join("config.toml"), "[search]\nmode = \"bm25\"\n").unwrap();
+    let r = ensure_config_toml(&cfg_dir).unwrap();
+    assert!(!r.created);
+    let v: toml::Value = toml::from_str(&std::fs::read_to_string(cfg_dir.join("config.toml")).unwrap()).unwrap();
+    assert_eq!(v["search"]["mode"].as_str(), Some("bm25"));
+    assert_eq!(v["conflict"]["enabled"].as_bool(), Some(true)); // filled in
+}
+```
+
+- [ ] **Step 2: Implement deep merge of missing keys only** (toml::Value table merge).
+
+- [ ] **Step 3:** Print report at end of install. Warn if `which claude` fails.
+
+- [ ] **Step 4: Commit** `feat(cli): install bootstraps ~/.memlayer/config.toml`
+
+---
+
+### Task 14: Postgres `MemoryStore` (team shared brain)
+
+**Files:**
+- Create: `crates/memlayer-storage/src/store.rs` (`MemoryStore` trait + `BackendKind`)
+- Create: `crates/memlayer-storage/src/postgres.rs`
+- Create: `migrations/postgres/V1__init.sql` (observations, sessions, prompts, facts, relations, embeddings vector(384))
+- Modify: `crates/memlayer-storage/Cargo.toml` — optional feature `postgres` with `sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }`
+- Modify: `crates/memlayer-core/src/config.rs` `StorageConfig { backend, url }`
+- Modify: `crates/memlayer-daemon/src/server.rs` — if postgres, construct `PostgresStore` instead of registry files
+- Modify: `crates/memlayer-storage/src/doctor.rs` — ping
+- Docs: `website/src/content/docs/docs/config.md`
+
+**Interfaces:**
+```rust
+pub enum BackendKind { Sqlite, Postgres }
+
+pub struct StorageConfig {
+    pub backend: String, // "sqlite" | "postgres"
+    pub url: Option<String>,
+}
+```
+
+Env: `MEMLAYER_STORAGE_BACKEND`, `MEMLAYER_DATABASE_URL`.
+
+SQL sketch (observations):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE TABLE observations (
+    project TEXT NOT NULL,
+    id BIGSERIAL,
+    sync_id UUID NOT NULL,
+    session_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tool_name TEXT,
+    scope TEXT NOT NULL,
+    created_by TEXT,
+    topic_key TEXT,
+    normalized_hash TEXT,
+    revision_count INT NOT NULL DEFAULT 0,
+    duplicate_count INT NOT NULL DEFAULT 0,
+    last_seen_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ,
+    review_after TIMESTAMPTZ,
+    code_anchor TEXT,
+    tsv tsvector GENERATED ALWAYS AS (
+      setweight(to_tsvector('simple', coalesce(title,'')), 'A') ||
+      setweight(to_tsvector('simple', coalesce(topic_key,'')), 'B') ||
+      setweight(to_tsvector('simple', coalesce(content,'')), 'C')
+    ) STORED,
+    embedding vector(384),
+    PRIMARY KEY (project, id),
+    UNIQUE (sync_id)
+);
+CREATE INDEX observations_tsv_gin ON observations USING GIN (tsv);
+CREATE INDEX observations_embedding_hnsw ON observations USING hnsw (embedding vector_l2_ops);
+```
+
+Search: `ORDER BY ts_rank_cd(tsv, plainto_tsquery('simple', $q)) DESC` fused with `<->` ANN, then RRF in Rust (reuse `rrf_fuse`).
+
+- [ ] **Step 1:** Trait + SqliteStore wrapper compiling; daemon still SQLite. Commit `refactor(storage): introduce MemoryStore trait`.
+
+- [ ] **Step 2:** Postgres schema + sqlx connect; skip tests if no URL:
+
+```rust
+#[tokio::test]
+async fn postgres_round_trip_save_search() {
+    let url = match std::env::var("MEMLAYER_DATABASE_URL") {
+        Ok(u) if !u.is_empty() => u,
+        _ => return,
+    };
+    // save one obs, search title token, assert hit
+}
+```
+
+- [ ] **Step 3:** Document:
+
+```toml
+[storage]
+backend = "postgres"
+url = "postgres://memlayer@dbhost/memlayer"
+```
+
+`memlayer doctor` prints `backend: postgres` and `SELECT 1` latency.
+
+- [ ] **Step 4: Commit** `feat(storage): optional Postgres+pgvector shared backend`
+
+**MySQL:** do not implement. Comment in config.md: use Postgres.
+
+---
+
+### Task 15: Enable extract by default in code defaults (align with install)
+
+**Files:**
+- Modify: `crates/memlayer-core/src/config.rs` `ExtractConfig::default` `enabled: true` (or leave false in Default and only install-merge — **chosen: install merge sets true; code Default may stay false for tests that expect no LLM**. Install is the user-facing default.)
+
+Do **not** flip extract default in unit tests globally if that shells out to Claude. Install-written TOML is enough for real users. Add `MEMLAYER_EXTRACT_ENABLED` already exists.
+
+- [ ] **Step 1:** Document in config.md that install turns extract+conflict+hybrid on.
+- [ ] **Step 2: Commit** if any code comment changes; else fold into Task 13.
+
+---
+
 ## Self-review (plan vs spec)
 
 | Spec section | Task |
@@ -1108,10 +1337,15 @@ git commit -m "docs: document .mem archives and decide"
 | D Decide RPC/CLI/MCP | Task 8 |
 | Naming constraint | Task 9 |
 | Docs | Task 10 |
+| E hybrid default + context query | Task 11 |
+| E facts in search, topic_key, warnings | Task 12 |
+| F install config bootstrap | Task 13 |
+| G Postgres shared store | Task 14 |
+| F/E extract via install not global Default | Task 15 |
 
-Placeholder scan: no TBD. Types: `ArchivePayload`, `ExportMem*`, `Decide*`, `ResolveJob` used consistently.
+Placeholder scan: no TBD. Types: `ArchivePayload`, `ExportMem*`, `Decide*`, `ResolveJob`, `SearchConfig`, `MemoryStore`, `StorageConfig` used consistently.
 
-**Out of scope leftover:** BIP39 wordlist validation; dense conflict candidate search; claiming a LoCoMo % in README.
+**Out of scope leftover:** BIP39 wordlist; MySQL; claiming a LoCoMo % in README; CRDT multi-master.
 
 ---
 

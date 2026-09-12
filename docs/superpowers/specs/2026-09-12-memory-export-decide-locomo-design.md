@@ -4,9 +4,9 @@
 **Status:** locked for implementation planning
 **Companion plan:** `docs/superpowers/plans/2026-09-12-mobile-mem-decide-locomo.md`
 
-This spec covers four workstreams that share no runtime dependency except
-the last two (Decide consumes conflict relations). They SHOULD land as
-separate PRs in the order below so each is reviewable.
+This spec covers seven workstreams. They SHOULD land as separate PRs
+in rollout order so each is reviewable. Decide consumes conflict
+relations; shared Postgres is independent of SQLite file layout.
 
 Naming constraint (global): do not use the word that names any third-party
 memory product in code, comments, prompts, docs, CLI help, or commit
@@ -32,6 +32,14 @@ messages. Call the new capability **Decide**. Call the conflict LLM the
    deletes) the old row. There is no “analyze memories and produce a
    decision” RPC/CLI/MCP tool. Conflicting pairs are not auto-queued for
    resolution.
+5. **Agent retrieval is BM25.** Hybrid, facts, recency decay, and
+   entity-walk exist in eval but not on the daemon path MCP/hooks use.
+   `Context` with a query ignores the query unless mode is hybrid.
+6. **Install does not configure memory.** Skills/MCP are written;
+   `~/.memlayer/config.toml` is not created or merged.
+7. **Single-device files only.** Storage is SQLite per project. TCP mode
+   is a gRPC front door to the same files, not a shared brain. There is
+   no Postgres/MySQL backend.
 
 ---
 
@@ -43,6 +51,7 @@ messages. Call the new capability **Decide**. Call the conflict LLM the
   git sync.
 - Reimplementing graphify / AST extraction.
 - Promising a specific LoCoMo percentage without a measured run.
+- MySQL / MariaDB dialect (v1 team store is Postgres + pgvector only).
 
 ---
 
@@ -532,9 +541,16 @@ Share `build_conflict_prompt` / parse helpers between
 | `crates/memlayer-daemon/src/resolve_worker.rs` | Async conflict resolution |
 | `crates/memlayer-daemon/src/decide.rs` | Decide handler |
 | `crates/memlayer-storage/src/write.rs` | ConflictsWith keeps both |
-| `crates/memlayer-core/src/config.rs` | `conflict.enabled` default true |
+| `crates/memlayer-core/src/config.rs` | `search`, `conflict`, `storage` config |
+| `crates/memlayer-cli/src/cmd_skill.rs` | `ensure_memlayer_home` on install |
+| `crates/memlayer-retrieval/src/facts_fuse.rs` | Port eval fact+RRF into daemon |
+| `crates/memlayer-daemon/src/service.rs` | Hybrid default, context+query, fact search |
+| `crates/memlayer-storage/src/store.rs` | `MemoryStore` trait |
+| `crates/memlayer-storage/src/postgres.rs` | Postgres + pgvector backend |
+| `migrations/postgres/*.sql` | PG schema |
+| `website/src/content/docs/docs/config.md` | storage.backend + DATABASE_URL |
 | `crates/memlayer-mcp/src/server.rs` | `memory_decide` |
-| `website/src/content/docs/docs/commands.md` | Document mem + decide |
+| `website/src/content/docs/docs/commands.md` | Document mem + decide + shared DB |
 | `docs/ROADMAP.md`, `crates/memlayer-cli/src/cmd_session.rs` | Strip forbidden product name |
 
 Schema: **no new migration** if `type=resolution` is just an observation
@@ -543,41 +559,240 @@ V8 already allows arbitrary `relation_type`.
 
 ---
 
-## 8. Testing
+## 8. Workstream E — Search, save, and LoCoMo-quality retrieval in the daemon
 
-- CSS: Playwright or a static HTML snapshot is optional; at minimum a
-  comment + manual 390px check in the implementation PR.
-- `mem_archive`: round-trip default and seeded; wrong seed fails; missing
-  seed on encrypted file fails; truncated/wrong magic fail; inner
-  “memlayer.archive” must not appear as UTF-8 in the file bytes; seeded
-  `.mem` smaller than pretty JSON+zstd-3 of the same rows.
-- Eval: unit test that `cmd_eval` errors when dataset missing; smoke
-  test with a tiny in-crate fixture (2 memories, 1 query) asserting
-  non-synthetic `total_queries == 1`.
-- Decide: mock `ClaudeClient`; conflict pair → `conflicts` in response;
-  `ConflictsWith` save does not set `deleted_at` on old row.
-- MCP: tool list includes `memory_decide`.
+Code audit (current `main`): the eval crate already has hybrid + facts +
+entity-walk + recency decay + contradiction penalties. The **daemon
+path agents actually use** does not.
+
+### 8.1 Gaps that keep us behind
+
+| Gap | File | Effect |
+|---|---|---|
+| Search/context/MCP/hooks default **bm25** | `cli.rs`, `mcp/server.rs`, `cmd_hook.rs`, `HybridMode::parse_wire` | Agents never get dense recall unless they pass `--mode hybrid` |
+| `Context` with a query in BM25 mode **ignores the query** | `service.rs` context handler | `memory_context` / `obs context --query` returns recency, not answers |
+| Facts never used in daemon search | `storage/facts.rs` `search_facts` unused | LoCoMo temporal/multi-hop techniques stay eval-only |
+| No recency decay in daemon | eval `scoring.rs` only | Stale memories rank equal to new ones |
+| `extract.enabled` / `conflict.enabled` default false | `config.rs` | No atomic facts, heuristic supersession |
+| `memory_add` never sets `topic_key` | `mcp/server.rs` | No topic supersession from MCP writes |
+| Embed/extract `try_queue` drop is silent to the user | `embed_worker.rs` | Memories saved without vectors |
+| All-projects hybrid skips rerank | `service.rs` early return | `--all-projects` weaker than single-project |
+| `memlayer eval` synthetic report | `cmd_eval.rs` | Published numbers are fake |
+
+### 8.2 Production retrieval (chosen)
+
+1. Add `[search]` to `MemlayerConfig`:
+   - `mode = "hybrid"` (default; `bm25` still valid)
+   - `rerank = false` (default; cost). LoCoMo eval profile may still rerank.
+   - `decay_lambda = 0.005` (same as eval)
+2. Wire parse: empty `mode` on Search/Context/MCP/hooks uses
+   `cfg.search.mode`, not hardcoded bm25.
+3. **Context:** if `query` is non-empty, always retrieve (hybrid or
+   BM25 per config). Recency briefing only when query is empty.
+4. **Fact-aware search:** if the project has facts, run `search_facts`
+   (BM25 + dense if present), map fact hits → parent `obs_id`, RRF-fuse
+   with observation hybrid lists (eval `retrieve_facts` algorithm,
+   ported into `memlayer-retrieval`, **called by the daemon**).
+5. Apply eval `apply_quality_modifiers` (salience, decay, contradiction)
+   when facts exist.
+6. **Save:** if `topic_key` empty, call existing `SuggestTopicKey` logic
+   inline (no extra RPC) before insert. MCP `memory_add` gets the same.
+7. When embed/extract queue drops, set `SaveObservationResponse` warning
+   string `embed_dropped` / `extract_dropped` (already has similar
+   fields pattern via `similar_observations`).
+8. Cross-project hybrid: run rerank when requested (remove early-return
+   skip).
+
+LoCoMo: Task 5 still wires the eval harness. This workstream makes
+**production search match the eval stack**, which is what actually
+beats other memory products in the agent loop.
+
+### 8.3 Approaches considered
+
+| Approach | Pros | Cons |
+|---|---|---|
+| **A. Port eval retrieve_facts into daemon + hybrid default (chosen)** | Same code that can score LoCoMo; agents benefit immediately | Extract must be on for full lift |
+| B. Keep BM25 default, document `--mode hybrid` | No surprise latency | Agents never flip the flag (today’s failure) |
+| C. New embedder (larger than BGE-small) | Maybe +1–3 pts | Binary size; do after A is measured |
 
 ---
 
-## 9. Rollout order
+## 9. Workstream F — `memlayer install` writes local config
 
-1. A (CSS) — isolated, ship first.
-2. B (`.mem`) — storage + CLI.
-3. C (LoCoMo wiring) — eval only.
-4. D (Decide + conflict semantics) — behavior change on save; needs
-   changelog note: `conflict.enabled` now defaults on; `ConflictsWith`
-   no longer deletes.
+Today install updates skills, hooks, MCP JSON. It **never** creates or
+merges `~/.memlayer/config.toml`. New agents therefore stay on BM25,
+extract off, conflict off.
+
+**Required:** at the start of `cmd_skill::dispatch`, call
+`ensure_memlayer_home()`:
+
+1. `paths::ensure_dirs` (data dir, projects, socket parent).
+2. If `~/.memlayer/config.toml` **missing**, write:
+
+```toml
+[search]
+mode = "hybrid"
+rerank = false
+
+[extract]
+enabled = true
+model = "haiku"
+
+[conflict]
+enabled = true
+model = "haiku"
+
+[embed]
+workers = 2
+
+[storage]
+backend = "sqlite"
+```
+
+3. If the file **exists**, deep-merge **only keys that are absent**.
+   Never overwrite a user’s `storage.postgres_url` or a custom
+   `search.mode`. If `extract.enabled` is missing, set `true`.
+4. Print a summary: backend, search.mode, extract, conflict.
+5. If `extract.enabled` and `claude` is not on PATH, warn (do not
+   disable).
+6. Restart hint: “restart the daemon (`memlayer daemon restart`) so
+   workers pick up config.”
+7. MCP upsert behavior stays (already merge-safe).
+
+Unit test: temp HOME, missing file → written; existing file with
+`[search] mode = "bm25"` stays bm25; missing `[conflict]` gets enabled.
 
 ---
 
-## 10. Spec self-review
+## 10. Workstream G — Shared team database (Postgres)
+
+**Default remains SQLite files** (`~/.memlayer/projects/<id>.db` +
+`global.sqlite`). Fastest for a single device: no network, FTS5,
+sqlite-vec.
+
+**Shared brain across devices:** a hosted SQL database all daemons
+connect to. Multiple laptops / CI agents see the same observations.
+
+### 10.1 Engine choice
+
+| Engine | FTS | Vectors | Hosted | Verdict |
+|---|---|---|---|---|
+| **PostgreSQL + pgvector** | `tsvector` + GIN | first-class `vector(384)` IVFFlat/HNSW | RDS, Cloud SQL, Neon, Supabase, Crunchy, self-host | **Chosen** |
+| MySQL 8 / MariaDB | FULLTEXT (boolean, weaker ranking) | HeatWave / experimental; not portable | RDS, PlanetScale | Rejected for ANN + ranking |
+| libSQL / Turso | FTS5 | sqlite-vec over HTTP is awkward | Turso | Follow-up if we need SQLite-shaped edge replicas |
+| SQLite on NFS | FTS5 | sqlite-vec | none | Unsafe writers; not a team store |
+
+Postgres is the fastest *hosted* option for this mix (concurrent
+writers, GIN FTS, HNSW ANN, `LISTEN/NOTIFY`). SQLite stays fastest
+*local*.
+
+### 10.2 Config
+
+```toml
+[storage]
+backend = "sqlite"          # default
+# backend = "postgres"
+# url = "postgres://user:pass@host:5432/memlayer"
+```
+
+Env (highest precedence): `MEMLAYER_STORAGE_BACKEND`,
+`MEMLAYER_DATABASE_URL` (standard name so hosted platforms inject it).
+
+When `backend = "postgres"`, ignore per-project file paths for data;
+`project_name` is a column. Local UDS daemon still runs on each device
+(embed/extract/rerank stay local). Only the system of record moves.
+
+### 10.3 Schema (logical)
+
+Same entities as SQLite V8: `observations`, `sessions`, `user_prompts`,
+`facts`, `observation_relations`, `observation_embeddings` (pgvector),
+`sync_id UUID UNIQUE`.
+
+Search: generated `tsvector` on title+content+topic_key; GIN index.
+Dense: `embedding vector(384)` + HNSW. Fact search: separate
+`facts_tsv` + `facts.embedding`.
+
+Migrations live in `migrations/postgres/V{N}__name.sql`, applied with
+`sqlx` (async, matches the daemon). Do **not** run SQLite refinery
+against Postgres.
+
+### 10.4 Concurrency and “same brain”
+
+- Each device: `memlayer` CLI → local daemon → **Postgres**.
+- Saves use `INSERT ... ON CONFLICT (sync_id)` so two devices cannot
+  fork the same observation.
+- Conflict judge + Decide run on whichever daemon handled the save;
+  relations are visible to all.
+- Optional `LISTEN memlayer_invalidate` after writes so other daemons
+  can drop project caches (LRU). v1 can skip NOTIFY and rely on
+  read-after-write to PG.
+- Auth to PG is the database URL (TLS). Memlayer TCP tokens remain for
+  exposing gRPC; they are **not** a substitute for the shared DB.
+
+### 10.5 Trait (do not fork the daemon)
+
+```rust
+#[async_trait]
+pub trait MemoryStore: Send + Sync {
+    fn backend_kind(&self) -> BackendKind; // Sqlite | Postgres
+    async fn save_observation(&self, input: SaveObservationInput) -> Result<Observation>;
+    async fn search(&self, q: SearchQuery) -> Result<Vec<Observation>>;
+    async fn search_facts(&self, q: SearchQuery) -> Result<Vec<FactHit>>;
+    // get/update/delete/list/recent/relations/history — same surface as today
+}
+```
+
+`SqliteStore` wraps today’s `ProjectRegistry` + write thread.
+`PostgresStore` uses `sqlx::PgPool` (max 16 connections per daemon).
+
+CLI: `memlayer doctor` reports backend + ping. `memlayer install`
+does not force Postgres. Document hosted setup in `docs/config.md`.
+
+### 10.6 Out of scope for G
+
+- MySQL dialect
+- Automatic SQLite→Postgres dump beyond `mem export` / `mem import`
+  (import into a postgres-backed daemon **is** supported: decode `.mem`
+  then save via the store)
+- Multi-master / CRDT. Postgres is the single writer store.
+
+---
+
+## 11. Testing (all workstreams)
+
+- CSS: Playwright optional; `npm run build` required.
+- `mem_archive`: round-trip default and seeded; encrypted-without-seed
+  is `SeedRequired` with the user-facing error; wrong seed fails;
+  truncated/wrong magic fail; inner format not UTF-8-legible; size vs
+  JSON+zstd-3.
+- Eval: no synthetic accuracy; missing dataset errors.
+- Decide: mock classifier; ConflictsWith keeps both rows.
+- Search: empty mode → hybrid from config; context+query does not
+  return a query-free recent list.
+- Install: temp HOME writes config; does not clobber existing mode.
+- Postgres: sqlx tests behind `#[cfg(feature = "postgres")]` or skipped
+  unless `MEMLAYER_DATABASE_URL` is set; Travis-style skip is OK. Unit
+  tests for SQL builders must not require a live server.
+
+---
+
+## 12. Rollout order
+
+1. A — mobile CSS
+2. B — `.mem` archive + seed UX
+3. E then F — hybrid default + install config (largest agent-visible lift)
+4. C — real LoCoMo eval
+5. D — Decide + conflict keep-both
+6. G — Postgres shared store (own PR; needs sqlx + hosted instance)
+
+---
+
+## 13. Spec self-review
 
 - Placeholders: none.
-- Scope: four PRs; one spec because the user asked for one plan.
-- Ambiguity: default `.mem` is obfuscated; `--seed-phrase` enables
-  Argon2id + XChaCha20-Poly1305 — explicit.
-- Ambiguity: LoCoMo target is “better than BM25-default real run”, not
-  a hardcoded %.
-- Forbidden third-party name: must be absent from all new and touched
-  comments.
+- Scope: seven workstreams; still one spec. Implement as separate PRs
+  per rollout order.
+- Ambiguity: default `.mem` obfuscated; seed enables AEAD. Shared DB is
+  **Postgres only** in v1. Local default remains SQLite files.
+- LoCoMo: no hardcoded % in README until a real run.
+- Forbidden third-party memory product names: still banned.
